@@ -4,7 +4,7 @@
 
 ●​  Vietnamese: Pulse – Hệ thống quản lý và dịch vụ cư dân thông minh
 
-●​ Abbreviation: SP26SE129 
+●​ Abbreviation: SP26SE129
 
 ## Context:
 
@@ -18,7 +18,7 @@ Core AI Agent (Agentic Workflow): The core of the system is a smart chatbot capa
 
 Streamlined Core Services: The system provides a comprehensive suite for living management, focusing on five core business flows: AI Incident Management, Payment Gateway, Amenities Booking, Resident Services, and Package Logistics to create a seamless "Smart Community".
 
- 
+
 ## Functional requirement
 
 ### Resident (Mobile App - Flutter)​
@@ -107,7 +107,7 @@ Security: Implement strict Role-based access control (RBAC) clearly distinguishi
 
 3. Server-side technologies:​
 - Server: .NET  (ASP.NET Core Web API)
-- Database System: PostgreSQL, Cloudinary  
+- Database System: PostgreSQL, Cloudinary
 - AI Services:Python langchain, Function calling, fastapi, Openai library, prompt tuning.
 
 
@@ -121,5 +121,3 @@ Security: Implement strict Role-based access control (RBAC) clearly distinguishi
 - Web Administration Portal.
 - AI Integration Module.​
 - PostgreSQL Database + ER diagram.​
-
-
