@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse Chat Tester</title>
+    <style>
+        /* ========== Reset & Base ========== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        /* ========== Layout ========== */
+        .app-container {
+            width: 100%;
+            max-width: 600px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 90vh;
+            max-height: 700px;
+        }
+
+        /* ========== Header ========== */
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .header-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* ========== Status Bar ========== */
+        .status-bar {
+            background: #f8f9fa;
+            padding: 8px 20px;
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #dc3545;
+        }
+
+        .status-dot.connected {
+            background: #28a745;
+        }
+
+        .status-dot.connecting {
+            background: #ffc107;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* ========== Chat Area ========== */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message.user {
+            align-items: flex-end;
+        }
+
+        .message.bot {
+            align-items: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            word-wrap: break-word;
+            line-height: 1.5;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.bot .message-bubble {
+            background: white;
+            color: #333;
+            border: 1px solid #e0e0e0;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.error .message-bubble {
+            background: #fff5f5;
+            border-color: #feb2b2;
+            color: #c53030;
+        }
+
+        .message-time {
+            font-size: 10px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        /* ========== Typing Indicator ========== */
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+            background: white;
+            border-radius: 16px;
+            border: 1px solid #e0e0e0;
+            width: fit-content;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-8px); }
+        }
+
+        /* ========== Action Buttons ========== */
+        .actions-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+            max-width: 80%;
+        }
+
+        .action-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .action-btn.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .action-btn.secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .action-btn.outline {
+            background: white;
+            border: 1px solid #667eea;
+            color: #667eea;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .action-btn:active {
+            transform: translateY(0);
+        }
+
+        /* ========== Input Area ========== */
+        .input-area {
+            padding: 16px 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 12px;
+        }
+
+        #message-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #message-input:focus {
+            border-color: #667eea;
+        }
+
+        #message-input:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+
+        #send-btn {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 24px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        #send-btn:hover:not(:disabled) {
+            transform: scale(1.05);
+        }
+
+        #send-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* ========== Settings Panel ========== */
+        .settings-panel {
+            position: fixed;
+            top: 0;
+            right: -400px;
+            width: 400px;
+            max-width: 100vw;
+            height: 100vh;
+            background: white;
+            box-shadow: -4px 0 20px rgba(0, 0, 0, 0.2);
+            transition: right 0.3s ease;
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        .settings-panel.open {
+            right: 0;
+        }
+
+        .settings-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .settings-header h2 {
+            font-size: 18px;
+        }
+
+        .settings-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .settings-content {
+            padding: 20px;
+        }
+
+        .settings-group {
+            margin-bottom: 24px;
+        }
+
+        .settings-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .settings-group input[type="text"],
+        .settings-group input[type="url"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .settings-group input[type="text"]:focus,
+        .settings-group input[type="url"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 20px;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .radio-option input {
+            cursor: pointer;
+        }
+
+        .checkbox-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .settings-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .settings-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .settings-btn.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .settings-btn.secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        /* ========== Login Modal ========== */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+
+        .modal-overlay.hidden {
+            display: none;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            width: 100%;
+            max-width: 400px;
+            margin: 20px;
+        }
+
+        .modal h2 {
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .modal p {
+            color: #666;
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .modal-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 16px;
+            transition: transform 0.2s;
+        }
+
+        .modal-btn:hover {
+            transform: scale(1.02);
+        }
+
+        .modal-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .error-message {
+            color: #c53030;
+            font-size: 14px;
+            margin-top: 12px;
+        }
+
+        /* ========== Overlay for Settings ========== */
+        .settings-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 999;
+            display: none;
+        }
+
+        .settings-overlay.open {
+            display: block;
+        }
+
+        /* ========== Responsive ========== */
+        @media (max-width: 480px) {
+            body {
+                padding: 0;
+            }
+
+            .app-container {
+                height: 100vh;
+                max-height: none;
+                border-radius: 0;
+            }
+
+            .header h1 {
+                font-size: 16px;
+            }
+
+            .settings-panel {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- App Container -->
+    <div class="app-container">
+        <!-- Header -->
+        <div class="header">
+            <h1>Pulse Chat Tester</h1>
+            <div class="header-actions">
+                <button class="header-btn" id="settings-btn">Settings</button>
+                <button class="header-btn" id="logout-btn">Logout</button>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text">Disconnected</span>
+            </div>
+            <div class="status-item">
+                <span id="mode-text">Mode: Regular</span>
+            </div>
+            <div class="status-item">
+                <span id="user-text">User: -</span>
+            </div>
+        </div>
+
+        <!-- Chat Container -->
+        <div class="chat-container" id="chat-container">
+            <!-- Messages will be added here -->
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+            <input type="text" id="message-input" placeholder="Type a message..." disabled>
+            <button id="send-btn" disabled>Send</button>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div class="settings-overlay" id="settings-overlay"></div>
+    <div class="settings-panel" id="settings-panel">
+        <div class="settings-header">
+            <h2>Settings</h2>
+            <button class="settings-close" id="settings-close">&times;</button>
+        </div>
+        <div class="settings-content">
+            <div class="settings-group">
+                <label>API Base URL</label>
+                <input type="url" id="api-url" value="http://localhost:8989/api/v1">
+            </div>
+
+            <div class="settings-group">
+                <label>Chat Mode</label>
+                <div class="radio-group">
+                    <label class="radio-option">
+                        <input type="radio" name="chat-mode" value="regular" checked>
+                        Regular (POST)
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="chat-mode" value="streaming">
+                        SSE Streaming
+                    </label>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <label>Session ID (optional)</label>
+                <input type="text" id="session-id" placeholder="Auto-generated if empty">
+            </div>
+
+            <div class="settings-group">
+                <label class="checkbox-option">
+                    <input type="checkbox" id="auto-refresh" checked>
+                    Auto-refresh token
+                </label>
+            </div>
+
+            <div class="settings-actions">
+                <button class="settings-btn secondary" id="clear-chat-btn">Clear Chat</button>
+                <button class="settings-btn primary" id="save-settings-btn">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div class="modal-overlay hidden" id="login-modal">
+        <div class="modal">
+            <h2>Welcome to Pulse Chat</h2>
+            <p>Please login to continue</p>
+            <div class="form-group">
+                <label>Phone Number</label>
+                <input type="text" id="login-phone" value="0901234567" placeholder="Enter phone number">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="login-password" value="demo123">
+            </div>
+            <button class="modal-btn" id="login-btn">Login</button>
+            <div class="error-message" id="login-error"></div>
+        </div>
+    </div>
+
+    <script>
+        // ========== Configuration ==========
+        const CONFIG = {
+            apiBase: 'http://localhost:8989/api/v1',
+            chatMode: 'regular',
+            autoRefresh: true,
+            sessionId: null
+        };
+
+        // ========== AuthManager Class ==========
+        class AuthManager {
+            constructor() {
+                this.accessToken = null;
+                this.tokenExpiry = null;
+                this.userPhone = null;
+                this.userName = null;
+                this.userRole = null;
+                this.refreshTimeout = null;
+                this.loadFromStorage();
+            }
+
+            loadFromStorage() {
+                this.accessToken = localStorage.getItem('pulse_access_token');
+                this.userPhone = localStorage.getItem('pulse_user_phone');
+                this.userName = localStorage.getItem('pulse_user_name');
+                this.userRole = localStorage.getItem('pulse_user_role');
+                const expiry = localStorage.getItem('pulse_token_expiry');
+                this.tokenExpiry = expiry ? parseInt(expiry) : null;
+
+                if (this.accessToken && this.tokenExpiry) {
+                    const now = Date.now();
+                    if (this.tokenExpiry > now) {
+                        this.scheduleAutoRefresh();
+                    } else {
+                        this.clearTokens();
+                    }
+                }
+            }
+
+            saveToStorage() {
+                if (this.accessToken) {
+                    localStorage.setItem('pulse_access_token', this.accessToken);
+                    localStorage.setItem('pulse_user_phone', this.userPhone);
+                    localStorage.setItem('pulse_user_name', this.userName);
+                    localStorage.setItem('pulse_user_role', this.userRole);
+                    localStorage.setItem('pulse_token_expiry', this.tokenExpiry);
+                } else {
+                    localStorage.removeItem('pulse_access_token');
+                    localStorage.removeItem('pulse_user_phone');
+                    localStorage.removeItem('pulse_user_name');
+                    localStorage.removeItem('pulse_user_role');
+                    localStorage.removeItem('pulse_token_expiry');
+                }
+            }
+
+            async login(phone_number, password) {
+                try {
+                    const response = await fetch(`${CONFIG.apiBase}/auth/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone_number, password })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Login failed');
+                    }
+
+                    const data = await response.json();
+                    this.accessToken = data.access_token;
+                    this.userPhone = phone_number;
+                    this.tokenExpiry = Date.now() + (data.expires_in * 1000);
+                    this.saveToStorage();
+                    this.scheduleAutoRefresh();
+                    return true;
+                } catch (error) {
+                    console.error('Login error:', error);
+                    throw error;
+                }
+            }
+
+            async refreshAccessToken() {
+                if (!this.accessToken) return false;
+
+                try {
+                    const response = await fetch(`${CONFIG.apiBase}/auth/refresh`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${this.accessToken}` }
+                    });
+
+                    if (!response.ok) {
+                        this.clearTokens();
+                        return false;
+                    }
+
+                    const data = await response.json();
+                    this.accessToken = data.access_token;
+                    this.tokenExpiry = Date.now() + (data.expires_in * 1000);
+                    this.saveToStorage();
+                    this.scheduleAutoRefresh();
+                    return true;
+                } catch (error) {
+                    console.error('Token refresh error:', error);
+                    this.clearTokens();
+                    return false;
+                }
+            }
+
+            scheduleAutoRefresh() {
+                if (this.refreshTimeout) {
+                    clearTimeout(this.refreshTimeout);
+                }
+
+                if (!CONFIG.autoRefresh || !this.tokenExpiry) return;
+
+                // Refresh 1 minute before expiry
+                const refreshTime = this.tokenExpiry - Date.now() - 60000;
+                if (refreshTime > 0) {
+                    this.refreshTimeout = setTimeout(() => {
+                        this.refreshAccessToken();
+                    }, refreshTime);
+                }
+            }
+
+            clearTokens() {
+                this.accessToken = null;
+                this.tokenExpiry = null;
+                this.userPhone = null;
+                this.userName = null;
+                this.userRole = null;
+                if (this.refreshTimeout) {
+                    clearTimeout(this.refreshTimeout);
+                }
+                this.saveToStorage();
+            }
+
+            isAuthenticated() {
+                return !!this.accessToken && this.tokenExpiry > Date.now();
+            }
+
+            getAuthHeader() {
+                return { 'Authorization': `Bearer ${this.accessToken}` };
+            }
+        }
+
+        // ========== ChatClient Class ==========
+        class ChatClient {
+            constructor(authManager) {
+                this.authManager = authManager;
+            }
+
+            async sendMessage(message, sessionId) {
+                const url = `${CONFIG.apiBase}/chat`;
+                const body = { message };
+                if (sessionId) body.session_id = sessionId;
+
+                const response = await this.fetchWithAuth(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                return await response.json();
+            }
+
+            async sendStreamingMessage(message, sessionId, callbacks) {
+                const params = new URLSearchParams({ message });
+                if (sessionId) params.append('session_id', sessionId);
+
+                const url = `${CONFIG.apiBase}/chat/stream?${params.toString()}`;
+
+                try {
+                    const response = await this.fetchWithAuth(url, {
+                        method: 'GET'
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    let buffer = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+                                    this.handleSSEEvent(data, callbacks);
+                                } catch (e) {
+                                    console.error('Failed to parse SSE:', line);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    callbacks.onError?.(error.message);
+                }
+            }
+
+            handleSSEEvent(data, callbacks) {
+                switch (data.type) {
+                    case 'thinking':
+                        callbacks.onThinking?.(data.content);
+                        break;
+                    case 'token':
+                        callbacks.onContent?.(data.content);
+                        break;
+                    case 'tool_call':
+                        callbacks.onToolCall?.(data);
+                        break;
+                    case 'actions':
+                        callbacks.onAction?.(data.actions);
+                        break;
+                    case 'complete':
+                        callbacks.onComplete?.(data);
+                        break;
+                    case 'error':
+                        callbacks.onError?.(data.error);
+                        break;
+                }
+            }
+
+            async executeAction(action) {
+                // API: POST /chat/action with ChatRequest body containing action field
+                const actionType = action.action_type || action.id || action.action_id;
+                const body = {
+                    action: actionType,
+                    message: action.label || actionType,
+                };
+                if (action.params) {
+                    body.params = action.params;
+                }
+
+                const response = await this.fetchWithAuth(`${CONFIG.apiBase}/chat/action`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                return await response.json();
+            }
+
+            async fetchWithAuth(url, options = {}) {
+                const headers = {
+                    ...this.authManager.getAuthHeader(),
+                    ...options.headers
+                };
+
+                let response = await fetch(url, { ...options, headers });
+
+                if (response.status === 401 && this.authManager.accessToken) {
+                    const refreshed = await this.authManager.refreshAccessToken();
+                    if (refreshed) {
+                        headers['Authorization'] = `Bearer ${this.authManager.accessToken}`;
+                        response = await fetch(url, { ...options, headers });
+                    } else {
+                        throw new Error('Session expired');
+                    }
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Request failed: ${response.status}`);
+                }
+
+                return response;
+            }
+        }
+
+        // ========== ChatUI Class ==========
+        class ChatUI {
+            constructor() {
+                this.container = document.getElementById('chat-container');
+                this.input = document.getElementById('message-input');
+                this.sendBtn = document.getElementById('send-btn');
+                this.statusDot = document.getElementById('status-dot');
+                this.statusText = document.getElementById('status-text');
+                this.modeText = document.getElementById('mode-text');
+                this.userText = document.getElementById('user-text');
+            }
+
+            addMessage(text, type, options = {}) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type} ${options.isError ? 'error' : ''}`;
+
+                const bubble = document.createElement('div');
+                bubble.className = 'message-bubble';
+                bubble.textContent = text;
+
+                messageDiv.appendChild(bubble);
+
+                if (options.actions && options.actions.length > 0) {
+                    const actionsContainer = document.createElement('div');
+                    actionsContainer.className = 'actions-container';
+                    options.actions.forEach(action => {
+                        const btn = document.createElement('button');
+                        btn.className = `action-btn ${action.style || 'secondary'}`;
+                        btn.textContent = action.label;
+                        btn.onclick = () => window.executeAction(action);
+                        actionsContainer.appendChild(btn);
+                    });
+                    messageDiv.appendChild(actionsContainer);
+                }
+
+                if (options.showTime !== false) {
+                    const time = document.createElement('div');
+                    time.className = 'message-time';
+                    time.textContent = new Date().toLocaleTimeString('vi-VN');
+                    messageDiv.appendChild(time);
+                }
+
+                this.container.appendChild(messageDiv);
+                this.scrollToBottom();
+                return messageDiv;
+            }
+
+            showTypingIndicator() {
+                const existing = document.getElementById('typing-indicator');
+                if (existing) existing.remove();
+
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message bot';
+                messageDiv.id = 'typing-indicator';
+
+                const typing = document.createElement('div');
+                typing.className = 'typing-indicator';
+                typing.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+
+                messageDiv.appendChild(typing);
+                this.container.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            hideTypingIndicator() {
+                const indicator = document.getElementById('typing-indicator');
+                if (indicator) indicator.remove();
+            }
+
+            clearChat() {
+                this.container.innerHTML = '';
+            }
+
+            scrollToBottom() {
+                this.container.scrollTop = this.container.scrollHeight;
+            }
+
+            updateConnectionStatus(status, userName = null) {
+                this.statusDot.className = 'status-dot';
+                switch (status) {
+                    case 'connected':
+                        this.statusDot.classList.add('connected');
+                        this.statusText.textContent = 'Connected';
+                        break;
+                    case 'connecting':
+                        this.statusDot.classList.add('connecting');
+                        this.statusText.textContent = 'Connecting...';
+                        break;
+                    case 'disconnected':
+                    default:
+                        this.statusText.textContent = 'Disconnected';
+                        break;
+                }
+
+                if (userName) {
+                    this.userText.textContent = `User: ${userName}`;
+                } else {
+                    this.userText.textContent = 'User: -';
+                }
+            }
+
+            updateMode(mode) {
+                this.modeText.textContent = `Mode: ${mode === 'streaming' ? 'SSE Streaming' : 'Regular'}`;
+            }
+
+            setInputEnabled(enabled) {
+                this.input.disabled = !enabled;
+                this.sendBtn.disabled = !enabled;
+                if (enabled) {
+                    this.input.focus();
+                }
+            }
+        }
+
+        // ========== Initialize ==========
+        const authManager = new AuthManager();
+        const chatClient = new ChatClient(authManager);
+        const ui = new ChatUI();
+
+        // DOM Elements
+        const loginModal = document.getElementById('login-modal');
+        const loginBtn = document.getElementById('login-btn');
+        const loginError = document.getElementById('login-error');
+        const settingsBtn = document.getElementById('settings-btn');
+        const logoutBtn = document.getElementById('logout-btn');
+        const settingsPanel = document.getElementById('settings-panel');
+        const settingsOverlay = document.getElementById('settings-overlay');
+        const settingsClose = document.getElementById('settings-close');
+        const saveSettingsBtn = document.getElementById('save-settings-btn');
+        const clearChatBtn = document.getElementById('clear-chat-btn');
+
+        // ========== Event Handlers ==========
+
+        // Login
+        loginBtn.addEventListener('click', async () => {
+            const phone = document.getElementById('login-phone').value;
+            const password = document.getElementById('login-password').value;
+
+            loginBtn.disabled = true;
+            loginBtn.textContent = 'Logging in...';
+            loginError.textContent = '';
+
+            try {
+                await authManager.login(phone, password);
+                loginModal.classList.add('hidden');
+                ui.updateConnectionStatus('connected', authManager.userName || phone);
+                ui.setInputEnabled(true);
+                ui.addMessage('Xin chao! Toi co the giup gi cho ban?', 'bot');
+            } catch (error) {
+                loginError.textContent = error.message;
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Login';
+            }
+        });
+
+        // Send message
+        async function sendMessage() {
+            const message = ui.input.value.trim();
+            if (!message) return;
+
+            ui.input.value = '';
+            ui.addMessage(message, 'user');
+            ui.setInputEnabled(false);
+
+            try {
+                const sessionId = CONFIG.sessionId || `web_${Date.now()}`;
+
+                if (CONFIG.chatMode === 'streaming') {
+                    // SSE Streaming mode
+                    ui.showTypingIndicator();
+                    let messageDiv = null;
+                    let bubble = null;
+                    let messageContent = '';
+
+                    await chatClient.sendStreamingMessage(message, sessionId, {
+                        onThinking: (content) => {
+                            // Typing indicator already shown
+                        },
+                        onContent: (content) => {
+                            ui.hideTypingIndicator();
+                            // Create message bubble on first token
+                            if (!messageDiv) {
+                                messageDiv = document.createElement('div');
+                                messageDiv.className = 'message bot';
+                                bubble = document.createElement('div');
+                                bubble.className = 'message-bubble';
+                                messageDiv.appendChild(bubble);
+                                ui.container.appendChild(messageDiv);
+                            }
+                            // Accumulate and display content
+                            messageContent += content;
+                            bubble.textContent = messageContent;
+                            ui.scrollToBottom();
+                        },
+                        onAction: (actions) => {
+                            // Actions will be added after content
+                            if (messageDiv && !messageDiv.querySelector('.actions-container')) {
+                                const actionsContainer = document.createElement('div');
+                                actionsContainer.className = 'actions-container';
+                                actions.forEach(action => {
+                                    const btn = document.createElement('button');
+                                    btn.className = `action-btn ${action.style || 'secondary'}`;
+                                    btn.textContent = action.label;
+                                    btn.onclick = () => executeAction(action);
+                                    actionsContainer.appendChild(btn);
+                                });
+                                messageDiv.appendChild(actionsContainer);
+                            }
+                        },
+                        onComplete: () => {
+                            ui.hideTypingIndicator();
+                            // Add timestamp if message was created
+                            if (messageDiv) {
+                                const time = document.createElement('div');
+                                time.className = 'message-time';
+                                time.textContent = new Date().toLocaleTimeString('vi-VN');
+                                messageDiv.appendChild(time);
+                            }
+                            ui.setInputEnabled(true);
+                        },
+                        onError: (error) => {
+                            ui.hideTypingIndicator();
+                            ui.addMessage(`Loi: ${error}`, 'bot', { isError: true });
+                            ui.setInputEnabled(true);
+                        }
+                    });
+
+                    // If no content was received, show a default message
+                    if (!messageDiv) {
+                        ui.addMessage('Khong nhan duoc phan hoi.', 'bot');
+                    }
+                } else {
+                    // Regular mode
+                    ui.showTypingIndicator();
+                    const response = await chatClient.sendMessage(message, sessionId);
+                    ui.hideTypingIndicator();
+                    ui.addMessage(response.message, 'bot', { actions: response.actions });
+                    ui.setInputEnabled(true);
+                }
+            } catch (error) {
+                ui.hideTypingIndicator();
+                ui.addMessage(`Loi: ${error.message}`, 'bot', { isError: true });
+                ui.setInputEnabled(true);
+
+                if (error.message === 'Session expired') {
+                    showLoginModal();
+                }
+            }
+        }
+
+        ui.sendBtn.addEventListener('click', sendMessage);
+        ui.input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Execute action
+        window.executeAction = async function(action) {
+            ui.addMessage(action.label, 'user');
+            ui.setInputEnabled(false);
+            ui.showTypingIndicator();
+
+            try {
+                const response = await chatClient.executeAction(action);
+                ui.hideTypingIndicator();
+                ui.addMessage(response.message, 'bot', { actions: response.actions });
+            } catch (error) {
+                ui.hideTypingIndicator();
+                ui.addMessage(`Loi: ${error.message}`, 'bot', { isError: true });
+            } finally {
+                ui.setInputEnabled(true);
+            }
+        };
+
+        // Settings
+        function openSettings() {
+            settingsPanel.classList.add('open');
+            settingsOverlay.classList.add('open');
+            document.getElementById('api-url').value = CONFIG.apiBase;
+            document.querySelector(`input[name="chat-mode"][value="${CONFIG.chatMode}"]`).checked = true;
+            document.getElementById('session-id').value = CONFIG.sessionId || '';
+            document.getElementById('auto-refresh').checked = CONFIG.autoRefresh;
+        }
+
+        function closeSettings() {
+            settingsPanel.classList.remove('open');
+            settingsOverlay.classList.remove('open');
+        }
+
+        settingsBtn.addEventListener('click', openSettings);
+        settingsClose.addEventListener('click', closeSettings);
+        settingsOverlay.addEventListener('click', closeSettings);
+
+        saveSettingsBtn.addEventListener('click', () => {
+            CONFIG.apiBase = document.getElementById('api-url').value;
+            CONFIG.chatMode = document.querySelector('input[name="chat-mode"]:checked').value;
+            CONFIG.sessionId = document.getElementById('session-id').value || null;
+            CONFIG.autoRefresh = document.getElementById('auto-refresh').checked;
+
+            ui.updateMode(CONFIG.chatMode);
+
+            if (CONFIG.autoRefresh && authManager.isAuthenticated()) {
+                authManager.scheduleAutoRefresh();
+            }
+
+            closeSettings();
+        });
+
+        clearChatBtn.addEventListener('click', () => {
+            ui.clearChat();
+            ui.addMessage('Chat cleared. How can I help you?', 'bot');
+        });
+
+        // Logout
+        logoutBtn.addEventListener('click', () => {
+            authManager.clearTokens();
+            ui.updateConnectionStatus('disconnected');
+            ui.setInputEnabled(false);
+            ui.clearChat();
+            showLoginModal();
+        });
+
+        // Show login modal
+        function showLoginModal() {
+            loginModal.classList.remove('hidden');
+            ui.updateConnectionStatus('disconnected');
+        }
+
+        // Initial check
+        if (authManager.isAuthenticated()) {
+            ui.updateConnectionStatus('connected', authManager.userName || authManager.userPhone);
+            ui.setInputEnabled(true);
+            ui.addMessage('Xin chao! Toi co the giup gi cho ban?', 'bot');
+        } else {
+            showLoginModal();
+        }
+
+        ui.updateMode(CONFIG.chatMode);
+    </script>
+</body>
+</html>
