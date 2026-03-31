@@ -1,147 +1,219 @@
-"""Shared pytest fixtures for testing."""
+"""Pytest configuration and fixtures for Resident Agent tests.
+
+Fixtures and test configuration per specs:
+- specs/authentication.md - JWT token system (phoneNumber login, no refresh in specs)
+- specs/api-reference.md - API endpoints (/auth/login, /chat, /chat/stream, /action)
+- specs/cux.md - CUX orchestrator (3 intent types)
+"""
+
+import os
+from typing import Generator
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock
-import asyncio
-
-# Import the modules we'll be testing
-# Note: These imports will work once the package is properly installed
+from fastapi.testclient import TestClient
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+# Test environment setup
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only")
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-api-key")
+os.environ.setdefault("DEMO_PHONE_NUMBER", "0901234567")
+os.environ.setdefault("DEMO_PASSWORD", "demo123")
 
+
+# =============================================================================
+# Settings Fixtures (per specs/authentication.md)
+# =============================================================================
 
 @pytest.fixture
-def settings():
-    """Create test settings instance."""
-    from resident_agent.core.config import Settings
+def test_settings():
+    """Create test settings per specs/authentication.md.
 
-    # Reset any existing instance
-    Settings.reset()
+    Note: Login uses phoneNumber, NOT email.
+    """
+    from dataclasses import dataclass
 
-    # Create test settings with known values
-    test_settings = Settings(
-        environment="test",
-        secret_key="test-secret-key-for-jwt-authentication-testing-minimum-32-characters",
-        openai_api_key="test-openai-key",
-        database_url="postgresql://test:test@localhost:5432/pulse_test",
-        demo_email="demo@example.com",
-        demo_password="demo123",
-        access_token_expire_minutes=15,
-        refresh_token_expire_days=7
-    )
+    @dataclass
+    class TestSettings:
+        jwt_secret_key: str = "test-secret-key-for-testing-only"
+        openai_api_key: str = "test-openai-api-key"
+        openai_api_base_url: str = ""
+        openai_model: str = "gpt-4o-mini"
+        openai_temperature: float = 0.0
+        openai_max_tokens: int = 1000
+        jwt_access_token_expire_minutes: int = 30
+        jwt_refresh_token_expire_days: int = 7
+        environment: str = "test"
+        host: str = "localhost"
+        port: int = 8000
+        pulse_backend_url: str = "http://localhost:5000"
+        pulse_backend_timeout: float = 30.0
+        redis_url: str = "redis://localhost:6379/0"
+        redis_prefix: str = "pulse:chat:"
+        redis_session_ttl: int = 3600
+        max_history_length: int = 10
+        session_timeout_seconds: int = 3600
+        max_actions_per_response: int = 4
+        actions_cache_ttl_seconds: int = 300
 
-    # Set as the singleton instance
-    Settings._instance = test_settings
-
-    yield test_settings
-
-    # Cleanup
-    Settings.reset()
-
-
-@pytest.fixture
-def executor():
-    """Create LangGraph executor for testing."""
-    from resident_agent.workflows.executor import LangGraphExecutor
-    return LangGraphExecutor()
+    return TestSettings()
 
 
-@pytest.fixture
-def mock_openai_client():
-    """Mock OpenAI client for testing without actual API calls."""
-    from unittest.mock import patch
-
-    mock_client = AsyncMock()
-
-    # Mock chat completion response
-    mock_response = MagicMock()
-    mock_response.choices = [
-        MagicMock(
-            message=MagicMock(
-                content='{"answer": "Test response", "actions": [], "intent": "unknown", "needs_tool": false}'
-            )
-        )
-    ]
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-    with patch('resident_agent.core.openai_client.OpenAIClient.get', return_value=mock_client):
-        yield mock_client
-
+# =============================================================================
+# JWT Token Fixtures (per specs/authentication.md - Two-Token System)
+# =============================================================================
 
 @pytest.fixture
-def jwt_handler(settings):
-    """Create JWT handler instance for testing."""
+def jwt_handler(test_settings):
+    """Create JWT handler for token creation."""
     from resident_agent.auth.jwt_handler import JWTHandler
-    return JWTHandler(settings)
-
-
-@pytest.fixture
-def rule_based_detector():
-    """Create rule-based intent detector for testing."""
-    from resident_agent.cux.intent_detector import RuleBasedDetector
-    return RuleBasedDetector()
-
-
-@pytest.fixture
-def hybrid_intent_detector(settings, mock_openai_client):
-    """Create hybrid intent detector with mocked LLM."""
-    from resident_agent.cux.intent_detector import HybridIntentDetector, LLMIntentDetector
-
-    llm_detector = LLMIntentDetector(settings)
-    return HybridIntentDetector(llm_detector=llm_detector)
-
-
-@pytest.fixture
-def allowance_client():
-    """Create allowance client for testing."""
-    from resident_agent.cux.allowance_client import AllowanceClient
-    return AllowanceClient()
-
-
-@pytest.fixture
-def state_manager():
-    """Create conversation state manager for testing."""
-    from resident_agent.cux.state_manager import ConversationStateManager
-    return ConversationStateManager()
-
-
-@pytest.fixture
-def cux_orchestrator(settings, rule_based_detector, allowance_client, state_manager):
-    """Create CUX orchestrator with all dependencies."""
-    from resident_agent.cux.orchestrator import CuxOrchestrator
-    from resident_agent.cux.intent_detector import HybridIntentDetector
-
-    # Create hybrid detector with rule-based only (no LLM for faster tests)
-    hybrid_detector = HybridIntentDetector(rule_detector=rule_based_detector, llm_detector=None)
-
-    return CuxOrchestrator(
-        intent_detector=hybrid_detector,
-        allowance_client=allowance_client,
-        state_manager=state_manager,
-        settings=settings
-    )
+    return JWTHandler(test_settings)
 
 
 @pytest.fixture
 def access_token(jwt_handler):
-    """Generate a valid access token for testing."""
-    return jwt_handler.create_access_token("test_user_123", "resident")
+    """Create valid Resident Agent access token (per specs/authentication.md)."""
+    return jwt_handler.create_access_token({"sub": "user_123", "role": "resident"})
 
 
 @pytest.fixture
-def refresh_token(jwt_handler):
-    """Generate a valid refresh token for testing."""
-    return jwt_handler.create_refresh_token("test_user_123")
+def admin_token(jwt_handler):
+    """Create admin access token for testing."""
+    return jwt_handler.create_access_token({"sub": "admin_001", "role": "admin"})
 
 
 @pytest.fixture
-def auth_headers(access_token):
-    """Create authorization headers for authenticated requests."""
-    return {"Authorization": f"Bearer {access_token}"}
+def staff_token(jwt_handler):
+    """Create staff access token for testing."""
+    return jwt_handler.create_access_token({"sub": "staff_001", "role": "staff"})
+
+
+@pytest.fixture
+def pulse_token():
+    """Mock Pulse Backend JWT token (per specs/authentication.md).
+
+    This is a token from Pulse Backend (.NET), passed via X-Pulse-Token header.
+    Used for Token Passthrough to fetch user permissions.
+    """
+    return "pulse_backend_jwt_token_for_passthrough"
+
+
+# =============================================================================
+# Test Client Fixtures
+# =============================================================================
+
+@pytest.fixture
+def test_client(test_settings) -> Generator[TestClient, None, None]:
+    """Create test client with mocked settings and state manager."""
+    with patch("resident_agent.core.config.Settings.get", return_value=test_settings):
+        # Mock StateManager to avoid Redis connection
+        mock_state_manager = MagicMock()
+        mock_state_manager.connect = AsyncMock()
+        mock_state_manager.add_message = AsyncMock()
+        mock_state_manager.get_history = AsyncMock(return_value=[])
+        mock_state_manager.get_history_for_llm = AsyncMock(return_value=[])
+
+        with patch("resident_agent.cux.orchestrator.StateManager", return_value=mock_state_manager):
+            from main import app
+            with TestClient(app) as client:
+                yield client
+
+
+# =============================================================================
+# Mock Fixtures
+# =============================================================================
+
+@pytest.fixture
+def mock_openai_client():
+    """Mock OpenAI client for testing without real API calls (per specs/cux.md)."""
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = '{"intent_type": "chitchat", "category": "chitchat", "confidence": 0.9}'
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+    return mock_client
+
+
+@pytest.fixture
+def mock_pulse_backend():
+    """Mock Pulse Backend API responses (per specs/architecture.md)."""
+    mock = MagicMock()
+    mock.get_user_roles = AsyncMock(return_value={
+        "roles": [{"name": "resident"}],
+        "effectiveCapabilities": [
+            "REPORT_INCIDENT",
+            "CHECK_PACKAGE",
+            "VIEW_BILLS",
+            "BOOK_AMENITY",
+            "SERVICE_REQUEST",
+        ]
+    })
+    return mock
+
+
+# =============================================================================
+# Sample Data Factories (per specs/api-reference.md)
+# =============================================================================
+
+class ChatRequestFactory:
+    """Factory for creating chat request payloads per specs/api-reference.md."""
+
+    @staticmethod
+    def greeting() -> dict:
+        return {"message": "Xin chào", "session_id": "test_session_123"}
+
+    @staticmethod
+    def incident_report() -> dict:
+        return {"message": "Báo sự cố vòi nước rò rỉ", "session_id": "test_session_123"}
+
+    @staticmethod
+    def package_check() -> dict:
+        return {"message": "Kiểm tra bưu kiện", "session_id": "test_session_123"}
+
+    @staticmethod
+    def bill_view() -> dict:
+        return {"message": "Xem hóa đơn tháng này", "session_id": "test_session_123"}
+
+    @staticmethod
+    def amenity_booking() -> dict:
+        return {"message": "Đặt chỗ bể bơi", "session_id": "test_session_123"}
+
+    @staticmethod
+    def service_request() -> dict:
+        return {"message": "Đăng ký thẻ cư dân", "session_id": "test_session_123"}
+
+    @staticmethod
+    def with_attachment() -> dict:
+        """Multimodal input per specs/cux.md."""
+        return {
+            "message": "Báo sự cố với hình ảnh",
+            "session_id": "test_session_123",
+            "attachments": [{
+                "type": "image",
+                "data": "base64_encoded_data",
+                "mime_type": "image/jpeg"
+            }]
+        }
+
+    @staticmethod
+    def custom(message: str, session_id: str = "test_session_123") -> dict:
+        return {"message": message, "session_id": session_id}
+
+
+@pytest.fixture
+def chat_request_factory() -> ChatRequestFactory:
+    return ChatRequestFactory()
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def create_auth_header(token: str) -> dict:
+    """Create Authorization header (per specs/authentication.md)."""
+    return {"Authorization": f"Bearer {token}"}
+
+
+def create_pulse_token_header(pulse_token: str) -> dict:
+    """Create X-Pulse-Token header for Token Passthrough (per specs/architecture.md)."""
+    return {"X-Pulse-Token": pulse_token}

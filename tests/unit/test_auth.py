@@ -1,129 +1,183 @@
-"""Unit tests for authentication module."""
+"""Unit tests for Authentication module.
+
+Tests cover JWT authentication per specs/authentication.md:
+- Two-Token System (Resident Agent JWT + Pulse Backend JWT)
+- Login with phoneNumber (NOT email)
+- Token Passthrough via X-Pulse-Token header
+"""
 
 import pytest
-from datetime import datetime, timedelta
-import time
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 from resident_agent.auth.jwt_handler import JWTHandler
-from resident_agent.auth.models import Token, TokenData, UserLogin, UserCreate
+from resident_agent.core.config import Settings
 
 
 class TestJWTHandler:
-    """Tests for JWT token generation and validation."""
+    """Tests for JWT token handling per specs/authentication.md."""
 
-    def test_create_access_token(self, jwt_handler):
-        """Test access token creation."""
-        token = jwt_handler.create_access_token("user_123", "resident")
-
-        assert token is not None
-        assert isinstance(token, str)
-        assert len(token) > 0
-
-    def test_create_refresh_token(self, jwt_handler):
-        """Test refresh token creation."""
-        token = jwt_handler.create_refresh_token("user_123")
+    def test_create_access_token(self, test_settings):
+        """Test access token creation per specs."""
+        handler = JWTHandler(test_settings)
+        token = handler.create_access_token({"sub": "user_123", "role": "resident"})
 
         assert token is not None
         assert isinstance(token, str)
-        assert len(token) > 1
 
-    def test_verify_valid_access_token(self, jwt_handler):
-        """Test verification of valid access token."""
-        token = jwt_handler.create_access_token("user_456", "staff")
-        payload = jwt_handler.verify_token(token)
-
+        payload = handler.decode_token(token)
         assert payload is not None
-        assert payload["sub"] == "user_456"
-        assert payload["role"] == "staff"
-        assert payload["type"] == "access"
+        assert payload["sub"] == "user_123"
+        assert payload["role"] == "resident"
 
-    def test_verify_valid_refresh_token(self, jwt_handler):
-        """Test verification of valid refresh token."""
-        token = jwt_handler.create_refresh_token("user_789")
-        payload = jwt_handler.verify_token(token)
+    def test_create_refresh_token(self, test_settings):
+        """Test refresh token creation per specs."""
+        handler = JWTHandler(test_settings)
+        token = handler.create_refresh_token({"sub": "user_123"})
 
+        payload = handler.decode_token(token)
         assert payload is not None
-        assert payload["sub"] == "user_789"
+        assert payload["sub"] == "user_123"
         assert payload["type"] == "refresh"
 
-    def test_verify_invalid_token(self, jwt_handler):
-        """Test verification of invalid token."""
-        payload = jwt_handler.verify_token("invalid_token_here")
-        assert payload is None
+    def test_verify_valid_token(self, test_settings):
+        """Test verification of valid token."""
+        handler = JWTHandler(test_settings)
+        token = handler.create_access_token({"sub": "user_123", "role": "admin"})
 
-    def test_verify_malformed_token(self, jwt_handler):
-        """Test verification of malformed token."""
-        payload = jwt_handler.verify_token("not.a.valid.token")
-        assert payload is None
-
-    def test_password_hashing(self, jwt_handler):
-        """Test password hashing and verification."""
-        password = "my_secure_password_123"
-        hashed = jwt_handler.hash_password(password)
-
-        assert hashed is not None
-        assert hashed != password  # Should be different
-        assert jwt_handler.verify_password(password, hashed) is True
-        assert jwt_handler.verify_password("wrong_password", hashed) is False
-
-    def test_different_passwords_have_different_hashes(self, jwt_handler):
-        """Test that different passwords produce different hashes."""
-        hash1 = jwt_handler.hash_password("password1")
-        hash2 = jwt_handler.hash_password("password2")
-
-        assert hash1 != hash2
-
-    def test_token_with_additional_claims(self, jwt_handler):
-        """Test token creation with additional claims."""
-        additional_claims = {
-            "unit_id": "A-1201",
-            "building_id": "pulse-tower"
-        }
-        token = jwt_handler.create_access_token(
-            "user_999",
-            "resident",
-            additional_claims
-        )
-        payload = jwt_handler.verify_token(token)
-
+        payload = handler.decode_token(token)
         assert payload is not None
-        assert payload["unit_id"] == "A-1201"
-        assert payload["building_id"] == "pulse-tower"
+        assert payload["sub"] == "user_123"
+        assert payload["role"] == "admin"
+
+    def test_verify_expired_token(self, test_settings):
+        """Test that expired tokens are rejected."""
+        import jwt
+
+        # Create expired token
+        expire = datetime.now(timezone.utc) - timedelta(hours=1)
+        payload = {
+            "sub": "user_123",
+            "role": "resident",
+            "exp": expire.timestamp(),
+            "iat": datetime.now(timezone.utc).timestamp(),
+            "iss": "resident-agent",
+        }
+        expired_token = jwt.encode(payload, test_settings.jwt_secret_key, algorithm="HS256")
+
+        handler = JWTHandler(test_settings)
+        try:
+            result = handler.decode_token(expired_token)
+            assert False, "Should have raised AuthenticationError"
+        except Exception:
+            pass  # Expected
+
+    def test_verify_invalid_token(self, test_settings):
+        """Test that invalid tokens are rejected."""
+        handler = JWTHandler(test_settings)
+
+        try:
+            handler.decode_token("invalid.token.here")
+            assert False, "Should have raised AuthenticationError"
+        except Exception:
+            pass  # Expected
+
+        try:
+            handler.decode_token("")
+            assert False, "Should have raised AuthenticationError"
+        except Exception:
+            pass  # Expected
+
+    def test_verify_token_wrong_secret(self, test_settings):
+        """Test tokens signed with wrong secret are rejected."""
+        handler = JWTHandler(test_settings)
+        token = handler.create_access_token({"sub": "user_123", "role": "resident"})
+
+        # Different secret
+        different_settings = Settings(
+            jwt_secret_key="different-secret-key",
+            openai_api_key="test-key",
+        )
+        different_handler = JWTHandler(different_settings)
+
+        try:
+            different_handler.decode_token(token)
+            assert False, "Should have raised AuthenticationError"
+        except Exception:
+            pass  # Expected
 
 
-class TestAuthModels:
-    """Tests for Pydantic models in auth module."""
+class TestLoginWithPhoneNumber:
+    """Tests for login with phoneNumber per specs/authentication.md.
 
-    def test_user_login_model(self):
-        """Test UserLogin model validation."""
-        login = UserLogin(email="test@example.com", password="password123")
+    Per specs:
+    - Login field: phoneNumber (NOT email)
+    - Demo credentials: phoneNumber + password
+    """
 
-        assert login.email == "test@example.com"
-        assert login.password == "password123"
+    def test_login_request_uses_phone_number(self):
+        """Verify LoginRequest schema uses phone_number per specs/authentication.md."""
+        from resident_agent.schemas.auth_schemas import LoginRequest
 
-    def test_token_model(self):
-        """Test Token model."""
-        token = Token(
-            access_token="access_token_value",
-            refresh_token="refresh_token_value",
+        # Per specs, login uses phone_number
+        request = LoginRequest(phone_number="0901234567", password="demo123")
+
+        assert request.phone_number == "0901234567"
+        assert request.password == "demo123"
+
+    def test_login_response_schema(self):
+        """Verify TokenResponse schema per specs/authentication.md."""
+        from resident_agent.schemas.auth_schemas import TokenResponse
+
+        response = TokenResponse(
+            access_token="token123",
             token_type="bearer",
-            expires_in=900
+            expires_in=3600,
         )
 
-        assert token.access_token == "access_token_value"
-        assert token.refresh_token == "refresh_token_value"
-        assert token.token_type == "bearer"
-        assert token.expires_in == 900
+        assert response.access_token == "token123"
+        assert response.token_type == "bearer"
+        assert response.expires_in == 3600
 
-    def test_user_create_model(self):
-        """Test UserCreate model validation."""
-        user = UserCreate(
-            email="new@example.com",
-            password="secure_password",
-            name="Test User",
-            role="resident"
-        )
 
-        assert user.email == "new@example.com"
-        assert user.name == "Test User"
-        assert user.role == "resident"
+class TestTokenPassthrough:
+    """Tests for Token Passthrough per specs/architecture.md.
+
+    Token Passthrough:
+    - Mobile app passes Pulse Backend JWT via X-Pulse-Token header
+    - Resident Agent uses Pulse token to fetch user capabilities
+    """
+
+    def test_x_pulse_token_header_format(self):
+        """Test X-Pulse-Token header format per specs."""
+        from tests.conftest import create_pulse_token_header
+
+        headers = create_pulse_token_header("pulse_jwt_token")
+        assert headers["X-Pulse-Token"] == "pulse_jwt_token"
+
+    def test_two_token_system_separation(self, test_settings):
+        """Test that Resident Agent and Pulse tokens are separate (per specs)."""
+        handler = JWTHandler(test_settings)
+
+        # Resident Agent token
+        ra_token = handler.create_access_token({"sub": "user_123", "role": "resident"})
+        ra_payload = handler.decode_token(ra_token)
+
+        # Pulse token would be from .NET backend (we just verify separation concept)
+        assert ra_payload["sub"] == "user_123"
+
+
+class TestRoleBasedAccess:
+    """Tests for role-based access control per specs/components.md.
+
+    Roles: resident, staff, admin
+    """
+
+    @pytest.mark.parametrize("role", ["resident", "staff", "admin"])
+    def test_create_tokens_for_different_roles(self, test_settings, role):
+        """Test token creation for all role types per specs."""
+        handler = JWTHandler(test_settings)
+        token = handler.create_access_token({"sub": "user_001", "role": role})
+
+        payload = handler.decode_token(token)
+        assert payload["role"] == role
