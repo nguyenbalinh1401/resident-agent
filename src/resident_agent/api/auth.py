@@ -1,94 +1,164 @@
-"""Authentication API endpoints for login and token refresh."""
+"""Authentication API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from datetime import timedelta
+from typing import Dict, Any
+from fastapi import APIRouter, HTTPException, status, Depends
+import structlog
 
-from ..schemas.auth_schemas import LoginRequest, LoginResponse
-from ..auth.jwt_handler import JWTHandler
-from ..core.config import Settings
+from resident_agent.schemas.auth_schemas import LoginRequest, TokenResponse
+from resident_agent.auth.jwt_handler import JWTHandler
+from resident_agent.auth.dependencies import get_current_user
+from resident_agent.core.config import Settings
+from resident_agent.clients.pulse_client import PulseClient, PulseConfig, PulseAPIError
+
+logger = structlog.get_logger()
 
 router = APIRouter()
-security = HTTPBearer()
 
 
-@router.post("/login", response_model=LoginResponse)
-async def login(
-    request: LoginRequest,
-    settings: Settings = Depends(lambda: Settings.get())
-) -> LoginResponse:
-    """Login endpoint to get access and refresh tokens.
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Login to Resident Agent",
+    description="Authenticate using phone number and password. Validates against Pulse Backend.",
+)
+async def login(request: LoginRequest) -> TokenResponse:
+    """Login endpoint that validates against Pulse Backend.
 
-    Demo credentials:
-    - Email: demo@example.com
-    - Password: demo123
+    This endpoint:
+    1. Validates credentials against Pulse Backend
+    2. Issues a Resident Agent JWT token
+
+    Args:
+        request: Login request with phone_number and password
 
     Returns:
-        LoginResponse with access_token, refresh_token, and expires_in
-    """
-    # Verify credentials (mock implementation - replace with database lookup in production)
-    if request.email == settings.demo_email and request.password == settings.demo_password:
-        handler = JWTHandler(settings)
-        access_token = handler.create_access_token("user_123", "resident")
-        refresh_token = handler.create_refresh_token("user_123")
+        TokenResponse with access_token
 
-        return LoginResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=settings.access_token_expire_minutes * 60
+    Raises:
+        HTTPException: If authentication fails
+    """
+    settings = Settings.get()
+    logger.info("login_attempt", phone_number=request.phone_number)
+
+    # Validate against Pulse Backend
+    pulse_config = PulseConfig(base_url=settings.pulse_backend_url)
+
+    try:
+        async with PulseClient(pulse_config) as client:
+            login_response = await client.login(
+                phone_number=request.phone_number,
+                password=request.password,
+            )
+
+            logger.info(
+                "pulse_login_success",
+                user_id=login_response.user_id,
+                role=login_response.role,
+            )
+
+            # Create Resident Agent JWT with user info
+            jwt_handler = JWTHandler(settings)
+
+            # Include user info in token payload
+            token_data = {
+                "sub": login_response.user_id,
+                "phone_number": request.phone_number,
+                "name": login_response.full_name,
+                "email": login_response.email,
+                "role": login_response.role,
+                "pulse_token": login_response.token,  # Store Pulse token for later use
+            }
+
+            access_token = jwt_handler.create_access_token(token_data)
+
+            return TokenResponse(
+                access_token=access_token,
+                token_type="bearer",
+                expires_in=jwt_handler.get_access_token_expires_in(),
+            )
+
+    except PulseAPIError as e:
+        logger.warning(
+            "pulse_login_failed",
+            phone_number=request.phone_number,
+            status_code=e.status_code,
+            error=str(e),
         )
 
-    # Invalid credentials
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid credentials"
-    )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid phone number or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    except Exception as e:
+        logger.error("login_error", error=str(e), exc_info=True)
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred during login",
+        )
 
 
-@router.post("/refresh", response_model=LoginResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Refresh access token",
+    description="Get a new access token using refresh token.",
+)
 async def refresh_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    settings: Settings = Depends(lambda: Settings.get())
-) -> LoginResponse:
-    """Refresh access token using a valid refresh token.
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> TokenResponse:
+    """Refresh access token.
+
+    Args:
+        user: Current user from JWT
 
     Returns:
-        LoginResponse with new access_token
+        New TokenResponse
     """
-    handler = JWTHandler(settings)
-    payload = handler.verify_token(credentials.credentials)
+    settings = Settings.get()
+    jwt_handler = JWTHandler(settings)
 
-    if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
+    # Create new token with same user data
+    token_data = {
+        "sub": user.get("sub"),
+        "phone_number": user.get("phone_number"),
+        "name": user.get("name"),
+        "email": user.get("email"),
+        "role": user.get("role"),
+        "pulse_token": user.get("pulse_token"),
+    }
 
-    if payload.get("type") != "refresh":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type. Please use refresh token."
-        )
+    access_token = jwt_handler.create_access_token(token_data)
 
-    # Create new access token
-    new_access_token = handler.create_access_token(
-        payload["sub"],
-        payload.get("role", "resident")
-    )
-
-    return LoginResponse(
-        access_token=new_access_token,
-        refresh_token=credentials.credentials,  # Return same refresh token
-        expires_in=settings.access_token_expire_minutes * 60
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=jwt_handler.get_access_token_expires_in(),
     )
 
 
-@router.post("/logout")
-async def logout(
-    user: dict = Depends(lambda: Depends(lambda: Settings.get()) and Depends(lambda: None))
-) -> dict:
-    """Logout endpoint to invalidate tokens.
+@router.get(
+    "/me",
+    summary="Get current user",
+    description="Get current authenticated user information.",
+)
+async def get_me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Get current user info.
 
-    Note: In production, this would add the token to a blacklist.
-    For now, just returns success message.
+    Args:
+        user: Current user from JWT
+
+    Returns:
+        User payload
     """
-    return {"message": "Logged out successfully", "user_id": user.get("user_id") if user else None}
+    # Remove sensitive data
+    return {
+        "user_id": user.get("sub"),
+        "phone_number": user.get("phone_number"),
+        "name": user.get("name"),
+        "email": user.get("email"),
+        "role": user.get("role"),
+    }

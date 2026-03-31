@@ -1,108 +1,131 @@
-"""Chat API endpoint for processing user messages."""
+"""Chat API endpoints."""
 
-from fastapi import APIRouter, Depends
-from typing import Optional
+from typing import Dict, Any, Optional
+import uuid
+from fastapi import APIRouter, Depends, Header
+import structlog
 
-from ..schemas.chat_schemas import ChatRequest, ChatResponse
-from ..schemas.auth_schemas import UserResponse
-from ..auth.dependencies import get_current_user
-from ..cux.orchestrator import CuxOrchestrator
-from ..core.config import Settings
+from resident_agent.schemas.chat_schemas import ChatRequest, ChatResponse
+from resident_agent.auth.dependencies import get_current_user, get_pulse_token
+from resident_agent.cux.orchestrator import CuxOrchestrator
+from resident_agent.core.config import Settings
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
-# Global orchestrator instance (initialized on first use)
-_orchestrator: Optional[CuxOrchestrator] = None
 
-
-def get_orchestrator() -> CuxOrchestrator:
-    """Get or create CUX orchestrator instance."""
-    global _orchestrator
-    if _orchestrator is None:
-        settings = Settings.get()
-        _orchestrator = CuxOrchestrator(settings=settings)
-    return _orchestrator
-
-
-@router.post("", response_model=ChatResponse)
+@router.post(
+    "",
+    response_model=ChatResponse,
+    summary="Send a chat message",
+    description="Send a message and get a response with optional action buttons.",
+)
 async def chat(
     request: ChatRequest,
-    current_user: dict = Depends(get_current_user),
-    orchestrator: CuxOrchestrator = Depends(get_orchestrator)
+    user: Dict[str, Any] = Depends(get_current_user),
+    pulse_token: Optional[str] = Depends(get_pulse_token),
 ) -> ChatResponse:
-    """Process a chat message and return response with suggested actions.
-
-    This endpoint:
-    1. Authenticates the user via JWT
-    2. Processes the message through CUX orchestrator
-    3. Returns response with message and action buttons
+    """Process a chat message.
 
     Args:
-        request: ChatRequest with message and optional session_id
-        current_user: Authenticated user from JWT token
-        orchestrator: CUX orchestrator instance
+        request: Chat request with message and optional session_id
+        user: Current user from JWT
+        pulse_token: Optional Pulse Backend token
 
     Returns:
-        ChatResponse with message, actions, and intent
+        ChatResponse with message, actions, and session_id
     """
-    # Use provided session_id or create default
-    session_id = request.session_id or f"session_{current_user['user_id']}"
+    # Generate session_id if not provided
+    session_id = request.session_id or str(uuid.uuid4())
 
-    # Process through CUX orchestrator
-    response = await orchestrator.process(
+    logger.info(
+        "chat_request",
         session_id=session_id,
-        user_id=current_user["user_id"],
-        message=request.message
+        user_id=user.get("sub"),
+        message_preview=request.message[:50],
+        has_pulse_token=pulse_token is not None,
     )
 
-    # Ensure session_id is in response
-    response.session_id = session_id
+    # Get Pulse token from user payload if not in header
+    if not pulse_token:
+        pulse_token = user.get("pulse_token")
+
+    # Initialize orchestrator
+    settings = Settings.get()
+    orchestrator = CuxOrchestrator(settings)
+
+    # Process message
+    response = await orchestrator.process(
+        message=request.message,
+        session_id=session_id,
+        user=user,
+        pulse_token=pulse_token,
+        intent_type=request.intent_type or "agentic_flow",
+        attachments=request.attachments,
+    )
+
+    logger.info(
+        "chat_response",
+        session_id=session_id,
+        response_length=len(response.message),
+        action_count=len(response.actions),
+        tool_call_count=len(response.tool_calls),
+    )
 
     return response
 
 
-@router.post("/action", response_model=ChatResponse)
+@router.post(
+    "/action",
+    response_model=ChatResponse,
+    summary="Execute an action",
+    description="Execute a suggested action directly (from action button click).",
+)
 async def execute_action(
-    action_id: str,
-    params: dict,
-    current_user: dict = Depends(get_current_user),
-    orchestrator: CuxOrchestrator = Depends(get_orchestrator)
+    request: ChatRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+    pulse_token: Optional[str] = Depends(get_pulse_token),
 ) -> ChatResponse:
-    """Execute a suggested action from a previous response.
+    """Execute an action directly.
 
-    This endpoint allows executing action buttons returned in chat responses.
+    This endpoint is used when user clicks an action button.
+    The action field should contain the action type to execute.
 
     Args:
-        action_id: ID of the action to execute
-        params: Parameters for the action
-        current_user: Authenticated user from JWT token
-        orchestrator: CUX orchestrator instance
+        request: Chat request with action field set
+        user: Current user from JWT
+        pulse_token: Optional Pulse Backend token
 
     Returns:
-        ChatResponse with action result
+        ChatResponse with action results
     """
-    # Map action_id to a message for processing
-    action_messages = {
-        "report_incident": "Tôi muốn báo sự cố",
-        "check_package": "Tôi muốn kiểm tra bưu kiện",
-        "view_bills": "Tôi muốn xem hóa đơn",
-        "book_amenity": "Tôi muốn đặt chỗ tiện ích",
-        "service_request": "Tôi cần yêu cầu dịch vụ",
-    }
+    session_id = request.session_id or str(uuid.uuid4())
+    action = request.action or request.message
 
-    message = action_messages.get(action_id, f"Execute action: {action_id}")
-
-    # Add params to message if available
-    if params:
-        message += f" với thông tin: {params}"
-
-    session_id = f"session_{current_user['user_id']}"
-
-    response = await orchestrator.process(
+    logger.info(
+        "action_request",
         session_id=session_id,
-        user_id=current_user["user_id"],
-        message=message
+        user_id=user.get("sub"),
+        action=action,
     )
 
-    response.session_id = session_id
+    # Get Pulse token
+    if not pulse_token:
+        pulse_token = user.get("pulse_token")
+
+    # Initialize orchestrator
+    settings = Settings.get()
+    orchestrator = CuxOrchestrator(settings)
+
+    # Process as tool_call intent
+    response = await orchestrator.process(
+        message=request.message or f"Execute action: {action}",
+        session_id=session_id,
+        user=user,
+        pulse_token=pulse_token,
+        intent_type="tool_call",
+        attachments=request.attachments,
+    )
+
     return response
