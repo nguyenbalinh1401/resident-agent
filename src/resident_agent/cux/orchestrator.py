@@ -1,450 +1,730 @@
-"""CUX Orchestrator - Central coordination for intent detection, allowance checking, and workflow routing.
+"""CUX Orchestrator - LLM-first conversation management with function calling.
 
-This module implements the LLM-first approach for response generation,
-combining intent detection with context-aware response creation.
+This orchestrator uses LLM with tool calling to handle user messages.
+No complex intent detection - the LLM decides what to do based on tool definitions.
 """
 
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, AsyncGenerator
 import json
 import random
 import structlog
 
-from openai import AsyncOpenAI
-
-from .intent_detector import (
-    HybridIntentDetector,
-    IntentType,
-    IntentCategory,
-    DetectedIntent,
+from resident_agent.core.config import Settings
+from resident_agent.core.openai_client import OpenAIClient
+from resident_agent.schemas.chat_schemas import (
+    ChatResponse,
+    ActionButton,
+    ActionStyle,
+    ToolCall,
+    SSEEvent,
+    SSEEventType,
 )
-from .allowance_client import AllowanceClient
-from .state_manager import ConversationStateManager
-from ..core.config import Settings
-from ..core.openai_client import OpenAIClient
-from ..schemas.chat_schemas import ChatResponse, ActionButton, ActionStyle
+from .tools import TOOLS, get_tools_for_capabilities, execute_tool
+from .action_generator import ActionGenerator
+from .state_manager import StateManager
 
 logger = structlog.get_logger()
 
 
-@dataclass
-class CuxDecision:
-    """Output of CUX Orchestrator processing."""
-    decision_type: str  # "proceed", "refusal", "clarification", "confirmation"
-    intent: DetectedIntent
-    allowed: bool
-    message_to_client: Optional[str] = None
-    workflow_to_trigger: Optional[str] = None
-    workflow_params: Optional[Dict[str, Any]] = None
-    clarification_options: Optional[List[Dict]] = None
-    confirmation_details: Optional[Dict] = None
-    suggestions: Optional[List[Dict]] = None
-    actions: List[ActionButton] = field(default_factory=list)
-
-
 class CuxOrchestrator:
-    """Central orchestration for CUX flow.
+    """LLM-first orchestrator with function calling.
 
     This orchestrator coordinates:
-    1. Intent detection (using hybrid approach)
-    2. Allowance checking (user permissions)
-    3. State management (conversation context)
-    4. Workflow routing (to LangGraph)
-    5. LLM response generation
+    1. Message processing via LLM
+    2. Tool execution (via PulseClient)
+    3. Response generation with actions
+    4. Conversation state management (Redis)
     """
 
-    # Chitchat responses for quick replies
-    CHITCHAT_RESPONSES = {
-        IntentType.GREETING: [
-            "Xin chào! Tôi là Pulse AI. Tôi có thể giúp gì cho bạn hôm nay?",
-            "Chào bạn! Bạn cần hỗ trợ gì về dịch vụ tòa nhà?",
-            "Xin chào! Rất vui được phục vụ bạn. Bạn muốn hỗ trợ gì?",
-        ],
-        IntentType.FAREWELL: [
-            "Tạm biệt! Chúc bạn một ngày tốt lành!",
-            "Hẹn gặp lại! Đừng ngại liên hệ nếu cần hỗ trợ.",
-            "Tạm biệt! Chúc bạn sức khỏe!",
-        ],
-        IntentType.THANKS: [
-            "Không có gì! Rất vui được phục vụ bạn.",
-            "Cảm ơn bạn đã sử dụng Pulse!",
-            "Rất mong được giúp đỡ bạn!",
-        ],
-        IntentType.SMALL_TALK: [
-            "Tôi là Pulse AI - trợ lý ảo 24/7 của bạn. Tôi có thể giúp gì?",
-            "Tôi hoạt động để hỗ trợ cư dân như bạn. Bạn cần giúp gì?",
-        ],
-    }
+    # System prompts
+    CHITCHAT_SYSTEM_PROMPT = """You are Pulse AI - a Vietnamese intelligent resident services assistant.
+Be friendly, helpful, and respond naturally in Vietnamese.
 
-    # LLM System Prompt for response generation
-    LLM_SYSTEM_PROMPT = """You are Pulse AI - a Vietnamese intelligent resident services assistant.
-Generate responses with suggested actions based on user's available capabilities.
+## Your role
+- 24/7 virtual concierge for residents
+- Help with building management, billing, amenities, and support
 
-## User's Available Capabilities
-{capabilities_list}
+## Response style
+- Be polite and professional
+- Keep responses concise but helpful
+- Use natural Vietnamese language
+- For greetings: welcome and offer assistance
+- For questions: answer directly"""
+
+    AGENTIC_SYSTEM_PROMPT = """You are Pulse AI - a Vietnamese intelligent resident services assistant.
+You have access to tools for helping residents manage their apartment and services.
+
+## Available Tools
+You can call these tools to help users:
+- get_bills: View utility bills
+- get_bill_detail: View specific bill details
+- make_payment: Pay a bill
+- get_amenities: View available facilities
+- book_amenity: Book a facility
+- get_my_bookings: View user's bookings
+- cancel_booking: Cancel a booking
+- create_incident: Report an issue
+- get_my_incidents: View reported issues
+- get_packages: Check packages
+- get_announcements: View building announcements
+
+## Response Rules
+1. ALWAYS respond in Vietnamese
+2. Call tools when needed to get real data
+3. After getting tool results, summarize them clearly
+4. If parameters are missing, ask the user for clarification
+5. Be helpful and suggest next actions
 
 ## User Context
 - Name: {user_name}
 - Unit: {unit}
-- Role: {role}
+- Available capabilities: {capabilities}"""
 
-## Response Rules
-1. ALWAYS respond in Vietnamese
-2. Be polite, professional, and helpful (concierge-level service)
-3. Suggest 2-4 relevant actions based on:
-   - The user's query context
-   - Their available capabilities ONLY (don't suggest actions they can't do)
-4. For greetings/unclear queries: show service menu
-5. For specific queries: answer first, then suggest follow-ups
-6. Escalate emergency requests (fire, medical, security) immediately
+    STREAM_SYSTEM_PROMPT = """You are Pulse AI - a Vietnamese intelligent resident services assistant.
+Respond naturally in Vietnamese. Be helpful and concise.
 
-## Response Format (JSON only)
-{{
-  "answer": "Your response in Vietnamese",
-  "actions": [
-    {{
-      "label": "🎯 Button text",
-      "action": "capability_id",
-      "params": {{"key": "value"}},
-      "style": "primary|secondary|outline"
-    }}
-  ],
-  "intent": "detected_intent",
-  "needs_tool": true/false
-}}"""
+## User Context
+- Name: {user_name}
+- Unit: {unit}
+- Available capabilities: {capabilities}
+
+## Guidelines
+1. Respond in Vietnamese only
+2. Be helpful and professional
+3. If you need data, call the appropriate tool
+4. After tool results, summarize clearly"""
 
     def __init__(
         self,
-        intent_detector: Optional[HybridIntentDetector] = None,
-        allowance_client: Optional[AllowanceClient] = None,
-        state_manager: Optional[ConversationStateManager] = None,
-        settings: Optional[Settings] = None
+        settings: Optional[Settings] = None,
+        state_manager: Optional[StateManager] = None,
+        action_generator: Optional[ActionGenerator] = None,
     ):
         """Initialize CUX Orchestrator.
 
         Args:
-            intent_detector: Intent detection component
-            allowance_client: Allowance checking component
-            state_manager: Conversation state manager
             settings: Application settings
+            state_manager: State manager for conversation history
+            action_generator: Action button generator
         """
-        self.intent_detector = intent_detector or HybridIntentDetector()
-        self.allowance_client = allowance_client or AllowanceClient()
-        self.state_manager = state_manager or ConversationStateManager()
         self.settings = settings or Settings.get()
-
-        # LangGraph workflow mappings
-        from ..workflows.registry import WorkflowName
-        self.intent_to_workflow = {
-            IntentType.INCIDENT_REPORT: WorkflowName.INCIDENT_REPORT,
-            IntentType.PACKAGE_CHECK: WorkflowName.PACKAGE_CHECK,
-            IntentType.BILL_VIEW: WorkflowName.BILL_VIEW,
-            IntentType.AMENITY_BOOK: WorkflowName.AMENITY_BOOK,
-            IntentType.SERVICE_REQUEST: WorkflowName.SERVICE_REQUEST,
-            IntentType.INCIDENT_MANAGEMENT: WorkflowName.INCIDENT_MANAGEMENT,
-            IntentType.BOOKING_FLOW: WorkflowName.BOOKING_FLOW,
-            IntentType.PAYMENT_FLOW: WorkflowName.PAYMENT_FLOW,
-        }
+        self.state_manager = state_manager or StateManager(self.settings)
+        self.action_generator = action_generator or ActionGenerator()
 
     async def process(
         self,
+        message: str,
         session_id: str,
-        user_id: str,
-        message: str
+        user: Dict[str, Any],
+        pulse_token: Optional[str] = None,
+        intent_type: str = "agentic_flow",
+        attachments: Optional[List[Dict]] = None,
     ) -> ChatResponse:
-        """Main entry point for CUX processing.
+        """Process a user message and return response.
 
         Args:
-            session_id: Session identifier
-            user_id: User identifier
             message: User message
+            session_id: Session identifier
+            user: User payload from JWT
+            pulse_token: Pulse Backend token for API access
+            intent_type: Intent type (chitchat, agentic_flow, tool_call)
+            attachments: Optional attachments (images, files)
 
         Returns:
-            ChatResponse with message and suggested actions
+            ChatResponse with message, actions, and tool calls
         """
         logger.info(
             "cux_process_start",
             session_id=session_id,
-            user_id=user_id,
-            message_preview=message[:50]
+            user_id=user.get("sub"),
+            intent_type=intent_type,
+            message_preview=message[:50],
         )
 
-        # 1. Add user message to history
-        await self.state_manager.add_message_to_history(
-            session_id, "user", message
-        )
+        # Connect to Redis if needed
+        if self.state_manager._redis is None:
+            await self.state_manager.connect()
 
-        # 2. Detect intent
-        conversation_history = await self._get_history_strings(session_id)
-        intent = await self.intent_detector.detect(message, conversation_history)
+        # Add user message to history
+        await self.state_manager.add_message(session_id, "user", message)
 
-        logger.info(
-            "intent_detected",
-            intent_type=intent.intent_type.value,
-            category=intent.category.value,
-            confidence=intent.confidence,
-            method=intent.detection_method
-        )
+        # Get conversation history
+        history = await self.state_manager.get_history_for_llm(session_id, limit=10)
 
-        # 3. Handle CHITCHAT - no allowance check needed
-        if intent.category == IntentCategory.CHITCHAT:
-            response = await self._handle_chitchat(session_id, intent)
-            await self.state_manager.add_message_to_history(
-                session_id, "assistant", response.message
+        # Get user capabilities
+        capabilities = user.get("capabilities", [])
+
+        # Handle based on intent type
+        if intent_type == "chitchat":
+            response = await self._handle_chitchat(message, session_id, history)
+        elif intent_type == "tool_call":
+            response = await self._handle_tool_call_direct(
+                message, session_id, pulse_token
             )
-            return response
-
-        # 4. Get user allowance
-        allowance = await self.allowance_client.get_allowance(user_id)
-
-        # 5. Check capability
-        if intent.required_capability:
-            if not self._check_allowance(intent.required_capability, allowance):
-                response = await self._handle_refusal(session_id, intent, allowance)
-                await self.state_manager.add_message_to_history(
-                    session_id, "assistant", response.message
-                )
-                return response
-
-        # 6. Check if clarification needed
-        if self._needs_clarification(intent):
-            response = await self._handle_clarification(session_id, intent)
-            await self.state_manager.add_message_to_history(
-                session_id, "assistant", response.message
+        else:  # agentic_flow
+            response = await self._handle_agentic_flow(
+                message,
+                session_id,
+                user,
+                pulse_token,
+                capabilities,
+                history,
+                attachments,
             )
-            return response
 
-        # 7. Proceed with action - generate LLM response
-        response = await self._generate_response(
-            session_id, user_id, intent, allowance, message
-        )
-
-        # Add assistant response to history
-        await self.state_manager.add_message_to_history(
-            session_id, "assistant", response.message
-        )
+        # Add assistant message to history
+        await self.state_manager.add_message(session_id, "assistant", response.message)
 
         return response
 
+    async def process_stream(
+        self,
+        message: str,
+        session_id: str,
+        user: Dict[str, Any],
+        pulse_token: Optional[str] = None,
+        intent_type: str = "agentic_flow",
+        attachments: Optional[List[Dict]] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Process a user message with streaming response.
+
+        Args:
+            message: User message
+            session_id: Session identifier
+            user: User payload from JWT
+            pulse_token: Pulse Backend token for API access
+            intent_type: Intent type
+            attachments: Optional attachments
+
+        Yields:
+            SSE event strings
+        """
+        logger.info(
+            "cux_stream_start",
+            session_id=session_id,
+            user_id=user.get("sub"),
+            intent_type=intent_type,
+        )
+
+        # Connect to Redis
+        if self.state_manager._redis is None:
+            await self.state_manager.connect()
+
+        # Add user message to history
+        await self.state_manager.add_message(session_id, "user", message)
+
+        # Get history
+        history = await self.state_manager.get_history_for_llm(session_id, limit=10)
+
+        capabilities = user.get("capabilities", [])
+
+        # Build messages for LLM
+        messages = self._build_messages(history, message, attachments)
+
+        # Get filtered tools
+        tools = get_tools_for_capabilities(capabilities)
+
+        # Build system prompt
+        system_prompt = self.STREAM_SYSTEM_PROMPT.format(
+            user_name=user.get("name", "Cư dân"),
+            unit=user.get("unit", "Resident"),
+            capabilities=", ".join(capabilities) if capabilities else "basic",
+        )
+
+        messages.insert(0, {"role": "system", "content": system_prompt})
+
+        accumulated_content = ""
+        tool_calls_made = []
+        last_tool_name = None
+
+        async with OpenAIClient(self.settings) as client:
+            # First call - might trigger tools
+            # Note: chat_completion_stream returns an async generator, don't await it
+            stream = client.chat_completion_stream(
+                messages=messages,
+                tools=tools if intent_type != "chitchat" else None,
+            )
+
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                # Handle content streaming
+                if delta.content:
+                    accumulated_content += delta.content
+                    event = SSEEvent(
+                        type=SSEEventType.TOKEN,
+                        session_id=session_id,
+                        content=delta.content,
+                    )
+                    yield event.to_sse()
+
+                # Handle tool calls
+                if delta.tool_calls:
+                    for tool_call in delta.tool_calls:
+                        tool_calls_made.append(tool_call)
+
+                if chunk.choices[0].finish_reason:
+                    break
+
+            # If tools were called, execute them and continue
+            if tool_calls_made and pulse_token:
+                # Execute tools
+                tool_results = []
+                for tc in tool_calls_made:
+                    tool_name = tc.function.name
+                    params = json.loads(tc.function.arguments)
+                    last_tool_name = tool_name
+
+                    # Yield tool call event
+                    event = SSEEvent(
+                        type=SSEEventType.TOOL_CALL,
+                        session_id=session_id,
+                        tool_call=ToolCall(
+                            tool=tool_name,
+                            params=params,
+                        ),
+                    )
+                    yield event.to_sse()
+
+                    # Execute the tool
+                    try:
+                        result = await execute_tool(
+                            tool_name,
+                            params,
+                            pulse_token,
+                            self.settings.pulse_backend_url,
+                        )
+                        tool_results.append(
+                            {
+                                "tool_call_id": tc.id,
+                                "role": "tool",
+                                "content": json.dumps(result, ensure_ascii=False),
+                            }
+                        )
+
+                        # Store result
+                        tool_calls_made[tool_calls_made.index(tc)] = ToolCall(
+                            tool=tool_name,
+                            params=params,
+                            result=result,
+                        )
+
+                    except Exception as e:
+                        logger.error("tool_execution_failed", tool=tool_name, error=str(e))
+                        tool_results.append(
+                            {
+                                "tool_call_id": tc.id,
+                                "role": "tool",
+                                "content": json.dumps({"error": str(e)}),
+                            }
+                        )
+
+                # Add tool results to messages and get final response
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in tool_calls_made
+                            if hasattr(tc, "id")
+                        ],
+                    }
+                )
+                messages.extend(tool_results)
+
+                # Stream final response
+                # Note: chat_completion_stream returns an async generator, don't await it
+                final_stream = client.chat_completion_stream(messages=messages)
+
+                async for chunk in final_stream:
+                    if not chunk.choices:
+                        continue
+
+                    delta = chunk.choices[0].delta
+
+                    if delta.content:
+                        accumulated_content += delta.content
+                        event = SSEEvent(
+                            type=SSEEventType.TOKEN,
+                            session_id=session_id,
+                            content=delta.content,
+                        )
+                        yield event.to_sse()
+
+                    if chunk.choices[0].finish_reason:
+                        break
+
+        # Generate actions
+        actions = self.action_generator.generate_actions(
+            last_tool=last_tool_name,
+            capabilities=capabilities,
+        )
+
+        # Yield actions event
+        event = SSEEvent(
+            type=SSEEventType.ACTIONS,
+            session_id=session_id,
+            actions=actions,
+        )
+        yield event.to_sse()
+
+        # Add to history
+        await self.state_manager.add_message(session_id, "assistant", accumulated_content)
+
+        # Yield complete event
+        event = SSEEvent(
+            type=SSEEventType.COMPLETE,
+            session_id=session_id,
+            content=accumulated_content,
+        )
+        yield event.to_sse()
+
     async def _handle_chitchat(
         self,
+        message: str,
         session_id: str,
-        intent: DetectedIntent
+        history: List[Dict[str, str]],
     ) -> ChatResponse:
-        """Handle chitchat intents directly."""
-        responses = self.CHITCHAT_RESPONSES.get(intent.intent_type, [])
-        response_text = random.choice(responses) if responses else "Tôi có thể giúp gì cho bạn?"
+        """Handle chitchat messages directly with LLM.
 
-        # Update state
-        await self.state_manager.update_state(session_id, {
-            "last_intent": intent.intent_type.value,
-            "last_category": intent.category.value,
-        })
+        Args:
+            message: User message
+            session_id: Session identifier
+            history: Conversation history
 
-        # Build action suggestions for chitchat
-        actions = self._get_default_actions()
+        Returns:
+            ChatResponse
+        """
+        messages = [{"role": "system", "content": self.CHITCHAT_SYSTEM_PROMPT}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": message})
 
-        return ChatResponse(
-            message=response_text,
-            actions=actions,
-            intent=intent.intent_type.value,
-            session_id=session_id
-        )
+        async with OpenAIClient(self.settings) as client:
+            response = await client.chat_completion(messages=messages)
 
-    async def _handle_refusal(
-        self,
-        session_id: str,
-        intent: DetectedIntent,
-        allowance: Dict
-    ) -> ChatResponse:
-        """Handle capability refusal with helpful alternatives."""
-        alternatives = self.allowance_client.suggest_alternatives(
-            intent.required_capability,
-            allowance
-        )
+            content = response.choices[0].message.content
 
-        message = f"Xin lỗi, bạn không có quyền thực hiện {intent.required_capability}."
-        if alternatives:
-            alt_labels = ", ".join([a["label"] for a in alternatives])
-            message += f" Tuy nhiên, bạn có thể: {alt_labels}"
-
-        actions = [
-            ActionButton(
-                id=alt["capability"],
-                label=alt["label"],
-                action_type=alt["capability"],
-                style=ActionStyle.SECONDARY
-            )
-            for alt in alternatives
-        ]
-
-        return ChatResponse(
-            message=message,
-            actions=actions,
-            intent=intent.intent_type.value,
-            session_id=session_id
-        )
-
-    async def _handle_clarification(
-        self,
-        session_id: str,
-        intent: DetectedIntent
-    ) -> ChatResponse:
-        """Request clarification from user."""
-        options = self._generate_clarification_options(intent)
-
-        message = "Tôi cần thêm thông tin để hỗ trợ bạn tốt hơn:"
-        actions = [
-            ActionButton(
-                id=opt["id"],
-                label=opt["label"],
-                action_type=opt.get("action", opt["id"]),
-                params=opt.get("params", {}),
-                style=ActionStyle.OUTLINE
-            )
-            for opt in options
-        ]
-
-        return ChatResponse(
-            message=message,
-            actions=actions,
-            intent=intent.intent_type.value,
-            session_id=session_id
-        )
-
-    async def _generate_response(
-        self,
-        session_id: str,
-        user_id: str,
-        intent: DetectedIntent,
-        allowance: Dict,
-        user_message: str
-    ) -> ChatResponse:
-        """Generate LLM-powered response with actions."""
-        try:
-            client = OpenAIClient.get(self.settings)
-
-            # Build context
-            capabilities = allowance.get("allowed_capabilities", [])
-            caps_list = "\n".join([f"- {cap}" for cap in capabilities])
-
-            system_prompt = self.LLM_SYSTEM_PROMPT.format(
-                capabilities_list=caps_list,
-                user_name=user_id,
-                unit="Resident",
-                role=allowance.get("roles", ["resident"])[0]
-            )
-
-            response = await client.chat.completions.create(
-                model=self.settings.openai_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.3,
-                max_tokens=500
-            )
-
-            result = json.loads(response.choices[0].message.content)
-
-            # Parse actions
-            actions = []
-            for action_data in result.get("actions", []):
-                actions.append(ActionButton(
-                    id=action_data.get("action", str(random.randint(1000, 9999))),
-                    label=action_data.get("label", "Action"),
-                    action_type=action_data.get("action", ""),
-                    params=action_data.get("params", {}),
-                    style=ActionStyle(action_data.get("style", "secondary"))
-                ))
+            # Get default actions
+            actions = self.action_generator.generate_actions()
 
             return ChatResponse(
-                message=result.get("answer", "Xin lỗi, tôi không thể xử lý yêu cầu này lúc này."),
+                message=content,
                 actions=actions,
-                intent=intent.intent_type.value,
-                session_id=session_id
+                session_id=session_id,
+            )
+
+    async def _handle_agentic_flow(
+        self,
+        message: str,
+        session_id: str,
+        user: Dict[str, Any],
+        pulse_token: Optional[str],
+        capabilities: List[str],
+        history: List[Dict[str, str]],
+        attachments: Optional[List[Dict]],
+    ) -> ChatResponse:
+        """Handle agentic flow with tool calling.
+
+        Args:
+            message: User message
+            session_id: Session identifier
+            user: User payload
+            pulse_token: Pulse Backend token
+            capabilities: User capabilities
+            history: Conversation history
+            attachments: Optional attachments
+
+        Returns:
+            ChatResponse
+        """
+        # Build system prompt
+        system_prompt = self.AGENTIC_SYSTEM_PROMPT.format(
+            user_name=user.get("name", "Cư dân"),
+            unit=user.get("unit", "Resident"),
+            capabilities=", ".join(capabilities) if capabilities else "basic",
+        )
+
+        # Build messages
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": message})
+
+        # Add attachments if provided
+        if attachments:
+            # For multimodal support
+            user_message = {"role": "user", "content": []}
+            user_message["content"].append({"type": "text", "text": message})
+
+            for att in attachments:
+                if att.get("type") == "image":
+                    user_message["content"].append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{att['mime_type']};base64,{att['data']}"
+                            },
+                        }
+                    )
+
+            messages[-1] = user_message
+
+        # Get filtered tools
+        tools = get_tools_for_capabilities(capabilities)
+
+        tool_calls_made = []
+        last_tool_name = None
+
+        async with OpenAIClient(self.settings) as client:
+            # First LLM call
+            response = await client.chat_completion(
+                messages=messages,
+                tools=tools,
+            )
+
+            assistant_message = response.choices[0].message
+
+            # Check if tool calls were made
+            if assistant_message.tool_calls:
+                # Execute tools
+                tool_results = []
+                for tc in assistant_message.tool_calls:
+                    tool_name = tc.function.name
+                    params = json.loads(tc.function.arguments)
+                    last_tool_name = tool_name
+
+                    logger.info("executing_tool", tool=tool_name, params=params)
+
+                    try:
+                        result = await execute_tool(
+                            tool_name,
+                            params,
+                            pulse_token,
+                            self.settings.pulse_backend_url,
+                        )
+                        tool_results.append(
+                            {
+                                "tool_call_id": tc.id,
+                                "role": "tool",
+                                "content": json.dumps(result, ensure_ascii=False),
+                            }
+                        )
+                        tool_calls_made.append(
+                            ToolCall(
+                                tool=tool_name,
+                                params=params,
+                                result=result,
+                            )
+                        )
+                    except Exception as e:
+                        logger.error("tool_execution_failed", tool=tool_name, error=str(e))
+                        tool_results.append(
+                            {
+                                "tool_call_id": tc.id,
+                                "role": "tool",
+                                "content": json.dumps({"error": str(e)}),
+                            }
+                        )
+                        tool_calls_made.append(
+                            ToolCall(
+                                tool=tool_name,
+                                params=params,
+                                result={"error": str(e)},
+                            )
+                        )
+
+                # Add assistant message with tool calls
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in assistant_message.tool_calls
+                        ],
+                    }
+                )
+                messages.extend(tool_results)
+
+                # Second LLM call with tool results
+                final_response = await client.chat_completion(messages=messages)
+                content = final_response.choices[0].message.content
+            else:
+                content = assistant_message.content or "Tôi không hiểu yêu cầu của bạn. Bạn có thể diễn đạt lại không?"
+
+        # Generate actions
+        actions = self.action_generator.generate_actions(
+            last_tool=last_tool_name,
+            capabilities=capabilities,
+        )
+
+        return ChatResponse(
+            message=content,
+            actions=actions,
+            session_id=session_id,
+            tool_calls=tool_calls_made,
+        )
+
+    async def _handle_tool_call_direct(
+        self,
+        action: str,
+        session_id: str,
+        pulse_token: Optional[str],
+    ) -> ChatResponse:
+        """Handle direct tool call (from UI action button).
+
+        Args:
+            action: Action type to execute
+            session_id: Session identifier
+            pulse_token: Pulse Backend token
+
+        Returns:
+            ChatResponse
+        """
+        # Map action types to tool names
+        action_to_tool = {
+            "view_bills": ("get_bills", {}),
+            "check_package": ("get_packages", {}),
+            "view_bookings": ("get_my_bookings", {}),
+            "view_incidents": ("get_my_incidents", {}),
+            "report_incident": ("create_incident", {}),
+            "book_amenity": ("get_amenities", {}),
+            "view_amenities": ("get_amenities", {}),
+        }
+
+        if action not in action_to_tool:
+            return ChatResponse(
+                message="Tôi không thể thực hiện hành động này.",
+                session_id=session_id,
+            )
+
+        tool_name, params = action_to_tool[action]
+
+        try:
+            result = await execute_tool(
+                tool_name,
+                params,
+                pulse_token,
+                self.settings.pulse_backend_url,
+            )
+
+            # Generate response based on tool result
+            # This could be enhanced with LLM summarization
+            message = self._summarize_tool_result(tool_name, result)
+
+            return ChatResponse(
+                message=message,
+                session_id=session_id,
+                tool_calls=[
+                    ToolCall(
+                        tool=tool_name,
+                        params=params,
+                        result=result,
+                    )
+                ],
             )
 
         except Exception as e:
-            logger.error("llm_response_failed", error=str(e))
-            # Fallback response
+            logger.error("direct_tool_call_failed", action=action, error=str(e))
             return ChatResponse(
-                message="Xin lỗi, đã có lỗi xảy ra. Vui lòng thử lại sau.",
-                actions=self._get_default_actions(),
-                intent=intent.intent_type.value,
-                session_id=session_id
+                message=f"Không thể thực hiện hành động: {str(e)}",
+                session_id=session_id,
             )
 
-    def _check_allowance(self, capability: str, allowance: Dict) -> bool:
-        """Check if user has required capability."""
-        allowed = allowance.get("allowed_capabilities", [])
-        roles = allowance.get("roles", [])
+    def _build_messages(
+        self,
+        history: List[Dict[str, str]],
+        message: str,
+        attachments: Optional[List[Dict]] = None,
+    ) -> List[Dict]:
+        """Build messages list for LLM.
 
-        # Admin has all capabilities
-        if "admin" in roles or "*" in allowed:
-            return True
+        Args:
+            history: Conversation history
+            message: Current user message
+            attachments: Optional attachments
 
-        return capability in allowed
+        Returns:
+            List of message dicts
+        """
+        messages = list(history)
 
-    def _needs_clarification(self, intent: DetectedIntent) -> bool:
-        """Determine if clarification is needed."""
-        # Low confidence needs clarification
-        if intent.confidence < 0.6:
-            return True
+        if attachments:
+            # Multimodal message
+            content = [{"type": "text", "text": message}]
+            for att in attachments:
+                if att.get("type") == "image" and att.get("data"):
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{att['mime_type']};base64,{att['data']}"
+                            },
+                        }
+                    )
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": message})
 
-        # Agentic flows without enough slots need clarification
-        if intent.category == IntentCategory.AGENTIC_FLOW:
-            required_slots = {"facility", "timeframe"}
-            if not required_slots.issubset(set(intent.slots.keys())):
-                return True
+        return messages
 
-        return False
+    def _summarize_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+    ) -> str:
+        """Generate a summary of tool result (simple version without LLM).
 
-    def _generate_clarification_options(self, intent: DetectedIntent) -> List[Dict]:
-        """Generate clarification options based on intent."""
-        if intent.category == IntentCategory.TOOL_CALL:
-            return [
-                {"id": "1", "label": "🔧 Báo sự cố", "action": "report_incident"},
-                {"id": "2", "label": "📦 Kiểm tra bưu kiện", "action": "check_package"},
-                {"id": "3", "label": "💳 Xem hóa đơn", "action": "view_bills"},
-                {"id": "4", "label": "🏊 Đặt chỗ tiện ích", "action": "book_amenity"},
-            ]
-        return [
-            {"id": "1", "label": "Tiếp tục", "action": "continue"},
-            {"id": "2", "label": "Hủy bỏ", "action": "cancel"},
-        ]
+        Args:
+            tool_name: Name of the tool that was executed
+            result: Tool execution result
 
-    def _get_default_actions(self) -> List[ActionButton]:
-        """Get default action suggestions."""
-        return [
-            ActionButton(
-                id="report_incident",
-                label="🔧 Báo sự cố",
-                action_type="report_incident",
-                style=ActionStyle.PRIMARY
-            ),
-            ActionButton(
-                id="check_package",
-                label="📦 Kiểm tra bưu kiện",
-                action_type="check_package",
-                style=ActionStyle.SECONDARY
-            ),
-            ActionButton(
-                id="view_bills",
-                label="💳 Xem hóa đơn",
-                action_type="view_bills",
-                style=ActionStyle.SECONDARY
-            ),
-            ActionButton(
-                id="book_amenity",
-                label="🏊 Đặt chỗ tiện ích",
-                action_type="book_amenity",
-                style=ActionStyle.OUTLINE
-            ),
-        ]
+        Returns:
+            Summary string
+        """
+        if tool_name == "get_bills":
+            bills = result if isinstance(result, list) else []
+            if not bills:
+                return "Bạn không có hóa đơn nào."
+            unpaid = [b for b in bills if b.get("status") == "Unpaid"]
+            if unpaid:
+                total = sum(b.get("amount", 0) for b in unpaid)
+                return f"Bạn có {len(unpaid)} hóa đơn chưa thanh toán với tổng số {total:,.0f}đ."
+            return f"Bạn có {len(bills)} hóa đơn đã thanh toán."
 
-    async def _get_history_strings(self, session_id: str) -> List[str]:
-        """Get conversation history as list of strings."""
-        history = await self.state_manager.get_history(session_id, limit=5)
-        return [f"{msg['role']}: {msg['content']}" for msg in history]
+        if tool_name == "get_packages":
+            packages = result if isinstance(result, list) else []
+            if not packages:
+                return "Hiện tại không có bưu kiện nào cho căn hộ của bạn."
+            return f"Bạn có {len(packages)} bưu kiện."
+
+        if tool_name == "get_my_bookings":
+            bookings = result if isinstance(result, list) else []
+            if not bookings:
+                return "Bạn chưa có đặt chỗ nào."
+            return f"Bạn có {len(bookings)} đặt chỗ."
+
+        if tool_name == "get_amenities":
+            amenities = result if isinstance(result, list) else []
+            if not amenities:
+                return "Không có tiện ích nào để đặt."
+            return f"Có {len(amenities)} tiện ích có sẵn để đặt."
+
+        # Default fallback
+        return "Đã thực hiện thành công."

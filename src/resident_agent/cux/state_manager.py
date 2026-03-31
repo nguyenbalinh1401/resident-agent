@@ -1,191 +1,220 @@
-"""Conversation state management for multi-turn dialogues.
+"""Redis-based conversation state management.
 
-This module handles:
-- Storing conversation state between messages
-- Managing conversation history
-- Session lifecycle management
+Manages conversation history and session state with Redis for persistence and TTL support.
 """
 
-from typing import Dict, Any, Optional, List
-from datetime import datetime
+from typing import Optional, Dict, Any, List
+import json
+import redis.asyncio as redis
 import structlog
+
+from resident_agent.core.config import Settings
 
 logger = structlog.get_logger()
 
 
-class ConversationStateManager:
-    """Manages conversation state for multi-turn dialogues.
+class StateManager:
+    """Redis-based conversation state manager."""
 
-    In production, this would use Redis or database.
-    For now, uses in-memory storage for testing.
-    """
-
-    def __init__(self, max_history_length: int = 10):
+    def __init__(self, settings: Optional[Settings] = None):
         """Initialize state manager.
 
         Args:
-            max_history_length: Maximum number of messages to keep in history
+            settings: Application settings
         """
-        self._states: Dict[str, Dict[str, Any]] = {}
-        self.max_history_length = max_history_length
+        self.settings = settings or Settings.get()
+        self._redis: Optional[redis.Redis] = None
+        self._prefix = self.settings.redis_prefix
 
-    async def get_state(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get current conversation state for a session.
-
-        Args:
-            session_id: Session identifier
+    async def connect(self) -> "StateManager":
+        """Establish Redis connection.
 
         Returns:
-            Current state dict or None if no state exists
+            Self for chaining
         """
-        state = self._states.get(session_id)
-        if state:
-            logger.debug(
-                "state_retrieved",
-                session_id=session_id,
-                history_length=len(state.get("history", []))
-            )
-        return state
-
-    async def update_state(
-        self,
-        session_id: str,
-        updates: Dict[str, Any]
-    ) -> None:
-        """Update conversation state.
-
-        Args:
-            session_id: Session identifier
-            updates: Dict of state updates to apply
-        """
-        current = self._states.get(session_id, {
-            "created_at": datetime.utcnow().isoformat(),
-            "history": [],
-            "context": {},
-        })
-
-        # Apply updates
-        current.update(updates)
-
-        # Update timestamp
-        current["updated_at"] = datetime.utcnow().isoformat()
-
-        # Manage history length
-        if "history" in updates:
-            history = current.get("history", [])
-            if len(history) > self.max_history_length:
-                current["history"] = history[-self.max_history_length:]
-
-        self._states[session_id] = current
-
-        logger.debug(
-            "state_updated",
-            session_id=session_id,
-            keys_updated=list(updates.keys())
+        if self._redis is None:
+            self._redis = redis.from_url(
+            self.settings.redis_url,
+            encoding="utf-8",
+            decode_responses=True,
         )
+        logger.info("redis_connected", url=self.settings.redis_url)
+        return self
 
-    async def add_message_to_history(
+    async def disconnect(self) -> None:
+        """Close Redis connection."""
+        if self._redis:
+            await self._redis.close()
+            self._redis = None
+            logger.info("redis_disconnected")
+
+    def _get_history_key(self, session_id: str) -> str:
+        """Get Redis key for message history."""
+        return f"{self._prefix}history:{session_id}"
+
+    def _get_state_key(self, session_id: str) -> str:
+        """Get Redis key for session state."""
+        return f"{self._prefix}state:{session_id}"
+
+    async def add_message(
         self,
         session_id: str,
         role: str,
-        message: str
+        content: str,
     ) -> None:
         """Add a message to conversation history.
 
         Args:
             session_id: Session identifier
             role: Message role ("user" or "assistant")
-            message: Message content
+            content: Message content
         """
-        state = await self.get_state(session_id)
-        if not state:
-            state = {
-                "created_at": datetime.utcnow().isoformat(),
-                "history": [],
-                "context": {},
-            }
+        key = self._get_history_key(session_id)
+        message = {"role": role, "content": content}
 
-        history = state.get("history", [])
-        history.append({
-            "role": role,
-            "content": message,
-            "timestamp": datetime.utcnow().isoformat()
-        })
+        # Add to Redis list
+        await self._redis.rpush(key, json.dumps(message, ensure_ascii=False))
 
-        await self.update_state(session_id, {"history": history})
+        # Trim to max history length
+        await self._redis.ltrim(key, -self.settings.max_history_length, -1)
+
+        # Set TTL on the key
+        await self._redis.expire(key, self.settings.redis_session_ttl)
+
+        logger.debug(
+            "message_added",
+            session_id=session_id,
+            role=role,
+            content_length=len(content),
+        )
 
     async def get_history(
         self,
         session_id: str,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
     ) -> List[Dict[str, str]]:
         """Get conversation history.
 
         Args:
             session_id: Session identifier
-            limit: Maximum number of messages to return
+            limit: Maximum number of messages to return (default: all)
 
         Returns:
-            List of message dicts with role, content, timestamp
+            List of message dicts with 'role' and 'content' keys
         """
-        state = await self.get_state(session_id)
-        if not state:
-            return []
+        key = self._get_history_key(session_id)
 
-        history = state.get("history", [])
         if limit:
-            return history[-limit:]
-        return history
+            messages = await self._redis.lrange(key, -limit, -1)
+        else:
+            messages = await self._redis.lrange(key, 0, -1)
 
-    async def get_context(self, session_id: str) -> Dict[str, Any]:
-        """Get conversation context (entities, preferences, etc.).
+        return [json.loads(msg) for msg in messages]
 
-        Args:
-            session_id: Session identifier
-
-        Returns:
-            Context dict with extracted entities and metadata
-        """
-        state = await self.get_state(session_id)
-        if not state:
-            return {}
-        return state.get("context", {})
-
-    async def set_context(
+    async def get_history_for_llm(
         self,
         session_id: str,
-        context: Dict[str, Any]
+        limit: int = 10,
+    ) -> List[Dict[str, str]]:
+        """Get conversation history formatted for LLM.
+
+        Args:
+            session_id: Session identifier
+            limit: Maximum number of messages
+
+        Returns:
+            List of message dicts ready for LLM consumption
+        """
+        messages = await self.get_history(session_id, limit=limit)
+        return [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+
+    async def clear_history(self, session_id: str) -> None:
+        """Clear conversation history for a session.
+
+        Args:
+            session_id: Session identifier
+        """
+        key = self._get_history_key(session_id)
+        await self._redis.delete(key)
+        logger.debug("history_cleared", session_id=session_id)
+
+    async def set_state(
+        self,
+        session_id: str,
+        state: Dict[str, Any],
     ) -> None:
-        """Set conversation context.
+        """Set session state.
 
         Args:
             session_id: Session identifier
-            context: Context dict to set
+            state: State dictionary to store
         """
-        await self.update_state(session_id, {"context": context})
+        key = self._get_state_key(session_id)
+        await self._redis.set(
+            key,
+            json.dumps(state, ensure_ascii=False),
+            ex=self.settings.redis_session_ttl,
+        )
+        logger.debug("state_set", session_id=session_id)
 
-    async def clear_state(self, session_id: str) -> None:
-        """Clear conversation state for a session.
+    async def get_state(self, session_id: str) -> Dict[str, Any]:
+        """Get session state.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            State dictionary or empty dict if not found
+        """
+        key = self._get_state_key(session_id)
+        state = await self._redis.get(key)
+
+        if state:
+            return json.loads(state)
+        return {}
+
+    async def update_state(
+        self,
+        session_id: str,
+        updates: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Update session state (merge with existing).
+
+        Args:
+            session_id: Session identifier
+            updates: State updates to merge
+
+        Returns:
+            Updated state dictionary
+        """
+        current = await self.get_state(session_id)
+        current.update(updates)
+        await self.set_state(session_id, current)
+        return current
+
+    async def delete_state(self, session_id: str) -> None:
+        """Delete session state.
 
         Args:
             session_id: Session identifier
         """
-        if session_id in self._states:
-            del self._states[session_id]
-            logger.debug("state_cleared", session_id=session_id)
+        key = self._get_state_key(session_id)
+        await self._redis.delete(key)
+        logger.debug("state_deleted", session_id=session_id)
 
-    async def get_all_sessions(self) -> List[str]:
-        """Get all active session IDs.
+    async def session_exists(self, session_id: str) -> bool:
+        """Check if a session exists (has history or state).
 
-        Returns:
-            List of session IDs
-        """
-        return list(self._states.keys())
-
-    def get_session_count(self) -> int:
-        """Get number of active sessions.
+        Args:
+            session_id: Session identifier
 
         Returns:
-            Number of sessions
+            True if session has any data
         """
-        return len(self._states)
+        history_key = self._get_history_key(session_id)
+        state_key = self._get_state_key(session_id)
+
+        history_exists = await self._redis.exists(history_key)
+        state_exists = await self._redis.exists(state_key)
+
+        return bool(history_exists or state_exists)

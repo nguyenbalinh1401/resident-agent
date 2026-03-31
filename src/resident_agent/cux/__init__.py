@@ -1,33 +1,15 @@
-"""CUX (Conversation Understanding & Execution) Orchestrator module.
+"""CUX Orchestrator module - LLM-first conversation management."""
 
-This module provides:
-- Intent detection (rule-based, ML, and LLM)
-- Allowance checking (user permissions)
-- State management (conversation context)
-- Workflow routing (to LangGraph)
-"""
-
-from .orchestrator import CuxOrchestrator, CuxDecision
-from .intent_detector import (
-    RuleBasedDetector,
-    LLMIntentDetector,
-    HybridIntentDetector,
-    IntentType,
-    IntentCategory,
-    DetectedIntent,
-)
-from .allowance_client import AllowanceClient
-from .state_manager import ConversationStateManager
+from resident_agent.cux.orchestrator import CuxOrchestrator
+from resident_agent.cux.tools import TOOLS, get_tools_for_capabilities, execute_tool
+from resident_agent.cux.action_generator import ActionGenerator
+from resident_agent.cux.state_manager import StateManager
 
 __all__ = [
     "CuxOrchestrator",
-    "CuxDecision",
-    "RuleBasedDetector",
-    "LLMIntentDetector",
-    "HybridIntentDetector",
-    "IntentType",
-    "IntentCategory",
-    "DetectedIntent",
-    "AllowanceClient",
-    "ConversationStateManager",
+    "TOOLS",
+    "get_tools_for_capabilities",
+    "execute_tool",
+    "ActionGenerator",
+    "StateManager",
 ]
