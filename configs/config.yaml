@@ -1,0 +1,47 @@
+# Pulse Chat Services Configuration
+# Priority: .env > config.yaml > class defaults
+#
+# This file provides default configuration values.
+# Environment variables (.env file) will override these values.
+
+# Application Settings
+application:
+  environment: development
+  log_level: INFO
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+
+# OpenAI / LLM Configuration
+openai:
+  api_base_url: null  # Override for custom OpenAI-compatible endpoints
+  model: "gpt-4o-mini"
+  max_tokens: 1000
+  temperature: 0.3
+
+# JWT Authentication
+jwt:
+  secret_key: "your-secret-key-here-change-in-production"
+  access_token_expire_minutes: 15
+  refresh_token_expire_days: 7
+
+# Pulse Backend API Configuration
+pulse_backend:
+  base_url: "http://localhost:8080"
+  timeout: 30.0
+
+# Action Generation Settings
+actions:
+  cache_ttl_seconds: 300  # 5 minutes
+  max_actions_per_response: 4
+
+# Conversation State Settings
+conversation:
+  max_history_length: 10
+  session_timeout_seconds: 3600  # 1 hour
+
+# Redis Configuration (for conversation state)
+redis:
+  url: "redis://localhost:6379/0"
+  prefix: "pulse:chat:"
+  session_ttl: 3600  # 1 hour
