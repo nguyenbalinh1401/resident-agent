@@ -1,128 +1,165 @@
-"""JWT token generation and validation handler."""
+"""JWT handling for Resident Agent authentication."""
 
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
-import hashlib
-import secrets
-import hmac
-import jwt
+import structlog
 
-from ..core.config import Settings
+from jose import JWTError, jwt
+
+from resident_agent.core.config import Settings
+from resident_agent.core.exceptions import AuthenticationError
+
+logger = structlog.get_logger()
 
 
 class JWTHandler:
-    """Handle JWT token creation, validation, and password hashing."""
+    """JWT token creation and validation."""
 
-    def __init__(self, settings: Settings):
-        self.settings = settings
+    ALGORITHM = "HS256"
+
+    def __init__(self, settings: Optional[Settings] = None):
+        """Initialize JWT handler.
+
+        Args:
+            settings: Application settings (uses default if not provided)
+        """
+        self.settings = settings or Settings.get()
 
     def create_access_token(
         self,
-        user_id: str,
-        role: str = "resident",
-        additional_claims: Optional[Dict[str, Any]] = None
+        data: Dict[str, Any],
+        expires_delta: Optional[timedelta] = None,
     ) -> str:
         """Create a JWT access token.
 
         Args:
-            user_id: User identifier
-            role: User role (resident, staff, admin)
-            additional_claims: Extra claims to include in token
+            data: Payload data to encode (typically {"sub": user_id, ...})
+            expires_delta: Custom expiration time
 
         Returns:
-            Encoded JWT access token
+            Encoded JWT string
         """
-        expire = datetime.utcnow() + timedelta(minutes=self.settings.access_token_expire_minutes)
+        to_encode = data.copy()
 
-        payload = {
-            "sub": user_id,
-            "role": role,
-            "exp": expire.timestamp(),
-            "iat": datetime.utcnow().timestamp(),
-            "type": "access"
-        }
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(
+                minutes=self.settings.jwt_access_token_expire_minutes
+            )
 
-        # Add any additional claims
-        if additional_claims:
-            payload.update(additional_claims)
+        to_encode.update({
+            "exp": expire,
+            "iat": datetime.utcnow(),
+            "iss": "resident-agent",
+        })
 
-        return jwt.encode(payload, self.settings.secret_key, algorithm="HS256")
+        encoded_jwt = jwt.encode(
+            to_encode,
+            self.settings.jwt_secret_key,
+            algorithm=self.ALGORITHM,
+        )
 
-    def create_refresh_token(self, user_id: str) -> str:
+        logger.debug(
+            "access_token_created",
+            subject=data.get("sub"),
+            expires_at=expire.isoformat(),
+        )
+
+        return encoded_jwt
+
+    def create_refresh_token(
+        self,
+        data: Dict[str, Any],
+        expires_delta: Optional[timedelta] = None,
+    ) -> str:
         """Create a JWT refresh token.
 
         Args:
-            user_id: User identifier
+            data: Payload data to encode
+            expires_delta: Custom expiration time
 
         Returns:
-            Encoded JWT refresh token
+            Encoded JWT string
         """
-        expire = datetime.utcnow() + timedelta(days=self.settings.refresh_token_expire_days)
+        to_encode = data.copy()
 
-        payload = {
-            "sub": user_id,
-            "exp": expire.timestamp(),
-            "iat": datetime.utcnow().timestamp(),
-            "type": "refresh"
-        }
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(
+                days=self.settings.jwt_refresh_token_expire_days
+            )
 
-        return jwt.encode(payload, self.settings.secret_key, algorithm="HS256")
+        to_encode.update({
+            "exp": expire,
+            "iat": datetime.utcnow(),
+            "iss": "resident-agent",
+            "type": "refresh",
+        })
 
-    def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Verify and decode a JWT token.
+        encoded_jwt = jwt.encode(
+            to_encode,
+            self.settings.jwt_secret_key,
+            algorithm=self.ALGORITHM,
+        )
+
+        logger.debug(
+            "refresh_token_created",
+            subject=data.get("sub"),
+            expires_at=expire.isoformat(),
+        )
+
+        return encoded_jwt
+
+    def decode_token(self, token: str) -> Dict[str, Any]:
+        """Decode and validate a JWT token.
 
         Args:
             token: JWT token string
 
         Returns:
-            Decoded payload if valid, None if invalid or expired
+            Decoded payload dict
+
+        Raises:
+            AuthenticationError: If token is invalid or expired
         """
         try:
             payload = jwt.decode(
                 token,
-                self.settings.secret_key,
-                algorithms=["HS256"]
+                self.settings.jwt_secret_key,
+                algorithms=[self.ALGORITHM],
+                issuer="resident-agent",
             )
-
-            # Check expiration
-            if payload.get("exp") and payload["exp"] < datetime.utcnow().timestamp():
-                return None  # Token has expired
-
+            logger.debug("token_decoded", subject=payload.get("sub"))
             return payload
 
-        except jwt.InvalidTokenError:
-            return None
-        except jwt.ExpiredSignatureError:
-            return None
-        except Exception:
-            return None
+        except JWTError as e:
+            logger.warning("token_decode_failed", error=str(e))
+            raise AuthenticationError(f"Invalid token: {str(e)}")
 
-    def hash_password(self, password: str) -> str:
-        """Hash a password using SHA-256 with random salt.
+    def get_token_expiry(self, token: str) -> Optional[datetime]:
+        """Get the expiration time of a token.
 
         Args:
-            password: Plain text password
+            token: JWT token string
 
         Returns:
-            Hashed password string in format: salt$hash
-        """
-        salt = secrets.token_hex(16)
-        hash_value = hashlib.sha256((salt + password).encode()).hexdigest()
-        return f"{salt}${hash_value}"
-
-    def verify_password(self, password: str, hashed: str) -> bool:
-        """Verify a password against a hash.
-
-        Args:
-            password: Plain text password to verify
-            hashed: Hashed password to compare against (salt$hash format)
-
-        Returns:
-            True if password matches, False otherwise
+            Expiration datetime or None if invalid
         """
         try:
-            salt, stored_hash = hashed.split("$")
-            computed_hash = hashlib.sha256((salt + password).encode()).hexdigest()
-            return hmac.compare_digest(computed_hash, stored_hash)
-        except Exception:
-            return False
+            payload = self.decode_token(token)
+            exp = payload.get("exp")
+            if exp:
+                return datetime.fromtimestamp(exp)
+        except AuthenticationError:
+            pass
+        return None
+
+    def get_access_token_expires_in(self) -> int:
+        """Get access token expiration time in seconds.
+
+        Returns:
+            Expiration time in seconds
+        """
+        return self.settings.jwt_access_token_expire_minutes * 60

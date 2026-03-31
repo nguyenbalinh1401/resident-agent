@@ -1,76 +1,143 @@
 """FastAPI dependencies for authentication."""
 
-from typing import Dict, Any
-from fastapi import Depends, HTTPException, status
+from typing import Optional, Dict, Any, Tuple
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import structlog
 
-from .jwt_handler import JWTHandler
-from ..core.config import Settings
+from resident_agent.auth.jwt_handler import JWTHandler
+from resident_agent.core.config import Settings
+from resident_agent.core.exceptions import AuthenticationError
+
+logger = structlog.get_logger()
+
+# HTTP Bearer scheme
+security = HTTPBearer(
+    scheme_name="Bearer",
+    description="Resident Agent JWT token",
+    auto_error=False,
+)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
-    settings: Settings = Depends(lambda: Settings.get())
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    settings: Settings = Depends(lambda: Settings.get()),
 ) -> Dict[str, Any]:
-    """FastAPI dependency to extract and validate current user from JWT token.
+    """Get current user from JWT token.
 
-    Usage:
-        @router.get("/protected")
-        async def protected_route(user: dict = Depends(get_current_user)):
-            return {"user_id": user["user_id"], "role": user["role"]}
+    This dependency extracts and validates the Resident Agent JWT token.
+
+    Args:
+        credentials: HTTP Bearer credentials
+        settings: Application settings
+
+    Returns:
+        User payload dict with fields like 'sub', 'phone_number', etc.
 
     Raises:
-        HTTPException: 401 if token is invalid or expired
+        HTTPException: If token is missing or invalid
     """
-    handler = JWTHandler(settings)
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     token = credentials.credentials
 
-    payload = handler.verify_token(token)
-    if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
+    try:
+        jwt_handler = JWTHandler(settings)
+        payload = jwt_handler.decode_token(token)
 
-    # Ensure it's an access token
-    if payload.get("type") != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type. Please use access token."
-        )
-
-    return {
-        "user_id": payload["sub"],
-        "role": payload.get("role", "resident"),
-        "exp": payload["exp"],
-        "iat": payload["iat"]
-    }
-
-
-async def get_current_user_id(
-    user: Dict[str, Any] = Depends(get_current_user)
-) -> str:
-    """Extract just the user ID from the current user."""
-    return user["user_id"]
-
-
-async def require_role(roles: list[str]):
-    """Dependency factory to require specific roles.
-
-    Usage:
-        @router.get("/admin-only")
-        async def admin_route(user: dict = Depends(require_role(["admin"]))):
-            return user
-    """
-    async def role_checker(
-        user: Dict[str, Any] = Depends(get_current_user)
-    ) -> None:
-        user_role = user.get("role", "resident")
-        if user_role not in roles:
+        # Ensure required fields exist
+        if "sub" not in payload:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Role '{user_role}' not allowed. Required roles: {roles}"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+                headers={"WWW-Authenticate": "Bearer"},
             )
-        return user
 
-    return role_checker
+        logger.debug(
+            "user_authenticated",
+            user_id=payload.get("sub"),
+            phone_number=payload.get("phone_number"),
+        )
+
+        return payload
+
+    except AuthenticationError as e:
+        logger.warning("authentication_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+async def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    settings: Settings = Depends(lambda: Settings.get()),
+) -> Optional[Dict[str, Any]]:
+    """Get current user from JWT token (optional - returns None if no token).
+
+    Args:
+        credentials: HTTP Bearer credentials
+        settings: Application settings
+
+    Returns:
+        User payload dict or None if no token provided
+    """
+    if credentials is None:
+        return None
+
+    try:
+        jwt_handler = JWTHandler(settings)
+        return jwt_handler.decode_token(credentials.credentials)
+    except AuthenticationError:
+        return None
+
+
+def get_pulse_token(
+    x_pulse_token: Optional[str] = Header(
+        None,
+        alias="X-Pulse-Token",
+        description="Pulse Backend JWT token for API access",
+    ),
+) -> Optional[str]:
+    """Extract Pulse Backend token from request headers.
+
+    This is used for passthrough authentication - the Pulse Backend token
+    is needed to access Pulse API endpoints on behalf of the user.
+
+    Args:
+        x_pulse_token: Pulse JWT token from X-Pulse-Token header
+
+    Returns:
+        Pulse token string or None if not provided
+    """
+    if x_pulse_token:
+        logger.debug("pulse_token_provided", token_length=len(x_pulse_token))
+    else:
+        logger.debug("pulse_token_not_provided")
+
+    return x_pulse_token
+
+
+async def get_user_with_pulse_token(
+    user: Dict[str, Any] = Depends(get_current_user),
+    pulse_token: Optional[str] = Depends(get_pulse_token),
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """Combined dependency for user + Pulse token.
+
+    Args:
+        user: Current user payload
+        pulse_token: Optional Pulse Backend token
+
+    Returns:
+        Tuple of (user_payload, pulse_token)
+
+    Raises:
+        HTTPException: If Pulse token is required but not provided
+    """
+    return user, pulse_token

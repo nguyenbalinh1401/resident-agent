@@ -1,14 +1,10 @@
-"""Authentication module for JWT-based authentication."""
+"""Authentication module - JWT handling and FastAPI dependencies."""
 
 from .jwt_handler import JWTHandler
-from .models import Token, TokenData, UserLogin, UserCreate
-from .dependencies import get_current_user
+from .dependencies import get_current_user, get_pulse_token
 
 __all__ = [
     "JWTHandler",
-    "Token",
-    "TokenData",
-    "UserLogin",
-    "UserCreate",
     "get_current_user",
+    "get_pulse_token",
 ]
