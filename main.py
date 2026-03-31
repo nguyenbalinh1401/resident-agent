@@ -8,14 +8,15 @@ This module sets up the FastAPI application with:
 """
 
 from contextlib import asynccontextmanager
+
+import structlog
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-import structlog
 
-from resident_agent.core.config import Settings
 from resident_agent.api import router as api_router
+from resident_agent.core.config import Settings
 
 # Configure structured logging
 structlog.configure(
@@ -47,7 +48,9 @@ async def lifespan(app: FastAPI):
     logger.info(
         "application_startup",
         environment=settings.environment,
-        port=settings.port
+        port=settings.port,
+        redis_url=settings.redis_url,
+        pulse_backend_url=settings.pulse_backend_url,
     )
 
     yield
@@ -60,11 +63,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Pulse Chat Services",
     description="Intelligent resident services platform with AI-powered chat",
-    version="1.0.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -85,35 +88,23 @@ app.include_router(api_router, prefix="/api/v1")
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors with detailed messages."""
-    logger.warning(
-        "validation_error",
-        path=request.url.path,
-        errors=exc.errors()
-    )
+    logger.warning("validation_error", path=request.url.path, errors=exc.errors())
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "detail": exc.errors(),
-            "body": exc.body
-        }
+        content={"detail": exc.errors(), "body": exc.body},
     )
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle unexpected errors."""
-    logger.error(
-        "unhandled_exception",
-        path=request.url.path,
-        error=str(exc),
-        exc_info=True
-    )
+    logger.error("unhandled_exception", path=request.url.path, error=str(exc), exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "detail": "An unexpected error occurred",
-            "error": str(exc) if Settings.get().environment == "development" else None
-        }
+            "error": str(exc) if Settings.get().environment == "development" else None,
+        },
     )
 
 
@@ -130,7 +121,7 @@ async def health_check():
         "status": "healthy",
         "service": "pulse-chat",
         "environment": settings.environment,
-        "version": "1.0.0"
+        "version": "2.0.0",
     }
 
 
@@ -143,10 +134,22 @@ async def root():
     """
     return {
         "name": "Pulse Chat Services",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "docs": "/docs",
         "health": "/health",
-        "api": "/api/v1"
+        "api": "/api/v1",
+        "endpoints": {
+            "auth": {
+                "login": "POST /api/v1/auth/login",
+                "refresh": "POST /api/v1/auth/refresh",
+                "me": "GET /api/v1/auth/me",
+            },
+            "chat": {
+                "send": "POST /api/v1/chat",
+                "action": "POST /api/v1/chat/action",
+                "stream": "GET /api/v1/chat/stream",
+            },
+        },
     }
 
 
@@ -159,5 +162,5 @@ if __name__ == "__main__":
         "main:app",
         host=settings.host,
         port=settings.port,
-        reload=settings.environment == "development"
+        reload=settings.environment == "development",
     )
