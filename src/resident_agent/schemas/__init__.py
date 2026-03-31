@@ -1,14 +1,27 @@
-"""Schemas module for request/response models."""
+"""Schemas module - Pydantic models for request/response validation."""
 
-from .chat_schemas import ChatRequest, ChatResponse, SSEMessage, ActionButton, ActionType
-from .auth_schemas import LoginRequest, LoginResponse
+from .auth_schemas import LoginRequest, TokenResponse, RefreshTokenRequest
+from .chat_schemas import (
+    Attachment,
+    ChatRequest,
+    ChatResponse,
+    ActionButton,
+    ActionStyle,
+    SSEEventType,
+    SSEEvent,
+)
 
 __all__ = [
+    # Auth
+    "LoginRequest",
+    "TokenResponse",
+    "RefreshTokenRequest",
+    # Chat
+    "Attachment",
     "ChatRequest",
     "ChatResponse",
-    "SSEMessage",
     "ActionButton",
-    "ActionType",
-    "LoginRequest",
-    "LoginResponse",
+    "ActionStyle",
+    "SSEEventType",
+    "SSEEvent",
 ]
