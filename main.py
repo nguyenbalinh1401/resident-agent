@@ -8,6 +8,7 @@ This module sets up the FastAPI application with:
 """
 
 from contextlib import asynccontextmanager
+import logging
 
 import structlog
 from fastapi import FastAPI, Request, status
@@ -18,24 +19,62 @@ from fastapi.responses import JSONResponse
 from resident_agent.api import router as api_router
 from resident_agent.core.config import Settings
 
-# Configure structured logging
+# Set root log level from settings
+settings = Settings.get()
+logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+
+# Silence noisy HTTP library loggers
+for _name in ("httpcore", "httpcore.http11", "httpcore.http2", "httpx", "openai"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
+
+# Configure structured logging — uvicorn-style format with colors
+_LEVEL_COLORS = {
+    "DEBUG": "\033[36m",     # cyan
+    "INFO": "\033[32m",      # green
+    "WARNING": "\033[33m",   # yellow
+    "ERROR": "\033[31m",     # red
+    "CRITICAL": "\033[1;31m",  # bold red
+}
+_RESET = "\033[0m"
+_DIM = "\033[2m"
+
+
+def _flatten_event(logger, method, event_dict):
+    """Flatten structlog event dict into a single colored message line."""
+    level = event_dict.get("level", "info").upper()
+    color = _LEVEL_COLORS.get(level, "")
+    event = event_dict.pop("event", "")
+    skip_keys = {"level", "_record", "logger_name", "timestamp"}
+    parts = [event] if event else []
+    for k, v in sorted(event_dict.items()):
+        if k not in skip_keys:
+            parts.append(f"{k}={v}")
+    msg = " ".join(str(p) for p in parts)
+    event_dict.clear()
+    event_dict["event"] = f"{color}{level:<8s}{_RESET} {_DIM}{msg}{_RESET}"
+    return event_dict
+
+
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
+        _flatten_event,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
-        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        structlog.stdlib.render_to_log_kwargs,
     ],
     wrapper_class=structlog.stdlib.BoundLogger,
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
     cache_logger_on_first_use=True,
 )
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(message)s"))
+logging.root.handlers = [_handler]
 
 logger = structlog.get_logger()
 
