@@ -4,12 +4,30 @@ These tools are passed to the LLM for function calling.
 The LLM decides which tool to call based on user message.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union, List
 import structlog
 
-from resident_agent.clients.pulse_client import PulseClient, PulseConfig
+from resident_agent.clients.pulse_client import PulseClient
 
 logger = structlog.get_logger()
+
+
+def _wrap_result(result: Union[Dict, List, Any]) -> Dict[str, Any]:
+    """Wrap result in dict if it's a list.
+
+    ToolCall.result expects Dict[str, Any], but PulseClient methods
+    return List[Dict] for collection endpoints. This helper ensures
+    all results are wrapped in a dictionary.
+
+    Args:
+        result: Result from PulseClient call (dict, list, or other)
+
+    Returns:
+        Dict with 'data' key if input was a list, otherwise returns as-is
+    """
+    if isinstance(result, list):
+        return {"data": result}
+    return result
 
 # Mock data for packages (when Pulse Backend endpoint unavailable)
 MOCK_PACKAGES = [
@@ -302,64 +320,17 @@ TOOLS = [
 ]
 
 
-def get_tools_for_capabilities(
-    capabilities: list[str],
-) -> list[dict]:
-    """Filter tools based on user capabilities.
-
-    Args:
-        capabilities: List of capability strings the user has access to
-
-    Returns:
-        Filtered list of tools the user can use
-    """
-    # Map capabilities to tool names
-    capability_to_tool = {
-        "PROFILE_VIEW": ["get_profile", "get_bill_detail"],
-        "PROFILE_UPDATE": ["update_contact"],
-        "BILLS_VIEW": ["get_bills", "get_bill_detail"],
-        "BILLS_PAY": ["make_payment"],
-        "AMENITY_VIEW": ["get_amenities", "get_amenity_detail", "get_my_bookings"],
-        "AMENITY_BOOK": ["book_amenity", "cancel_booking"],
-        "INCIDENT_REPORT": ["create_incident"],
-        "INCIDENT_VIEW": ["get_my_incidents", "get_incident_detail"],
-        "PACKAGE_VIEW": ["get_packages"],
-        "NOTIFICATION_VIEW": ["get_announcements"],
-    }
-
-    # Start with tools everyone can use
-    allowed_tool_names = {"get_profile"}
-
-    # Add tools based on capabilities
-    for cap in capabilities:
-        if cap in capability_to_tool:
-            allowed_tool_names.update(capability_to_tool[cap])
-
-    # If user has wildcard capability, return all tools
-    if "*" in capabilities or "admin" in capabilities:
-        return TOOLS
-
-    # Filter and return tools
-    return [
-        tool
-        for tool in TOOLS
-        if tool["function"]["name"] in allowed_tool_names
-    ]
-
-
 async def execute_tool(
     tool_name: str,
     params: dict,
-    pulse_token: str,
-    pulse_backend_url: str = "http://localhost:8080",
+    pulse_client: PulseClient,
 ) -> dict:
     """Execute a tool by calling the Pulse Backend API.
 
     Args:
         tool_name: Name of the tool to execute
         params: Tool parameters
-        pulse_token: JWT token for Pulse Backend
-        pulse_backend_url: Base URL for Pulse Backend
+        pulse_client: Authenticated PulseClient instance (injected via dependency)
 
     Returns:
         Tool execution result
@@ -369,65 +340,75 @@ async def execute_tool(
     """
     logger.info("executing_tool", tool=tool_name, params=params)
 
-    config = PulseConfig(base_url=pulse_backend_url, token=pulse_token)
-
-    async with PulseClient(config) as client:
+    try:
         # Profile tools
         if tool_name == "get_profile":
-            return await client.get_current_user()
+            result = await pulse_client.get_current_user()
 
-        if tool_name == "update_contact":
-            return await client.update_profile(**params)
+        elif tool_name == "update_contact":
+            result = await pulse_client.update_profile(**params)
 
         # Bills tools
-        if tool_name == "get_bills":
-            return await client.get_bills(**params)
+        elif tool_name == "get_bills":
+            result = _wrap_result(await pulse_client.get_bills(**params))
 
-        if tool_name == "get_bill_detail":
-            return await client.get_bill(params["bill_id"])
+        elif tool_name == "get_bill_detail":
+            result = await pulse_client.get_bill(params["bill_id"])
 
-        if tool_name == "make_payment":
-            return await client.create_payment(**params)
+        elif tool_name == "make_payment":
+            result = await pulse_client.create_payment(**params)
 
         # Amenity tools
-        if tool_name == "get_amenities":
-            return await client.get_amenities(**params)
+        elif tool_name == "get_amenities":
+            result = _wrap_result(await pulse_client.get_amenities(**params))
 
-        if tool_name == "get_amenity_detail":
-            return await client.get_amenity(params["amenity_id"])
+        elif tool_name == "get_amenity_detail":
+            result = await pulse_client.get_amenity(params["amenity_id"])
 
-        if tool_name == "book_amenity":
-            return await client.create_booking(**params)
+        elif tool_name == "book_amenity":
+            result = await pulse_client.create_booking(**params)
 
-        if tool_name == "get_my_bookings":
-            return await client.get_bookings(**params)
+        elif tool_name == "get_my_bookings":
+            result = _wrap_result(await pulse_client.get_bookings(**params))
 
-        if tool_name == "cancel_booking":
-            return await client.cancel_booking(params["booking_id"])
+        elif tool_name == "cancel_booking":
+            result = await pulse_client.cancel_booking(params["booking_id"])
 
         # Incident tools
-        if tool_name == "create_incident":
-            return await client.create_ticket(**params)
+        elif tool_name == "create_incident":
+            result = await pulse_client.create_ticket(**params)
 
-        if tool_name == "get_my_incidents":
-            return await client.get_tickets(**params)
+        elif tool_name == "get_my_incidents":
+            result = _wrap_result(await pulse_client.get_tickets(**params))
 
-        if tool_name == "get_incident_detail":
-            return await client.get_ticket(params["ticket_id"])
+        elif tool_name == "get_incident_detail":
+            result = await pulse_client.get_ticket(params["ticket_id"])
 
         # Package tools
-        if tool_name == "get_packages":
+        elif tool_name == "get_packages":
             # Use mock data since Pulse Backend Packages endpoint is not available
             status_filter = params.get("status")
             if status_filter:
                 filtered = [p for p in MOCK_PACKAGES if p["status"] == status_filter]
-                return {"packages": filtered, "total": len(filtered), "mock": True}
-            return {"packages": MOCK_PACKAGES, "total": len(MOCK_PACKAGES), "mock": True}
+                result = {"data": filtered, "total": len(filtered), "mock": True}
+            else:
+                result = {"data": MOCK_PACKAGES, "total": len(MOCK_PACKAGES), "mock": True}
 
         # Announcement tools
-        if tool_name == "get_announcements":
-            limit = params.get("limit", 10)
-            return await client.get_announcements(limit=limit)
+        elif tool_name == "get_announcements":
+            result = _wrap_result(await pulse_client.get_announcements())
 
-        # Unknown tool
-        raise ValueError(f"Unknown tool: {tool_name}")
+        else:
+            raise ValueError(f"Unknown tool: {tool_name}")
+
+    except Exception as e:
+        logger.error("tool_execution_failed", tool=tool_name, error=str(e))
+        raise
+
+    logger.debug(
+        "tool_execution_result",
+        tool=tool_name,
+        result_type=type(result).__name__,
+        result_preview=str(result)[:200] if result else None,
+    )
+    return result

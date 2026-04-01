@@ -5,12 +5,16 @@ No complex intent detection - the LLM decides what to do based on tool definitio
 """
 
 from typing import Optional, List, Dict, Any, AsyncGenerator
+from pathlib import Path
 import json
-import random
+import re
+import yaml
 import structlog
+from openai import AsyncOpenAI
 
 from resident_agent.core.config import Settings
 from resident_agent.core.openai_client import OpenAIClient
+from resident_agent.clients.pulse_client import PulseClient
 from resident_agent.schemas.chat_schemas import (
     ChatResponse,
     ActionButton,
@@ -19,11 +23,26 @@ from resident_agent.schemas.chat_schemas import (
     SSEEvent,
     SSEEventType,
 )
-from .tools import TOOLS, get_tools_for_capabilities, execute_tool
-from .action_generator import ActionGenerator
-from .state_manager import StateManager
+from resident_agent.cux.tools import TOOLS, execute_tool
+from resident_agent.auth.permission_mapper import PermissionMapper
+from resident_agent.cux.action_generator import ActionGenerator
+from resident_agent.cux.state_manager import StateManager
 
 logger = structlog.get_logger()
+
+
+def _load_prompts(path: str) -> Dict[str, str]:
+    """Load system prompts from a YAML file.
+
+    Args:
+        path: Path to the prompts YAML file.
+
+    Returns:
+        Dict mapping prompt names to their template strings.
+    """
+    prompts_file = Path(path)
+    with open(prompts_file, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 class CuxOrchestrator:
@@ -36,69 +55,12 @@ class CuxOrchestrator:
     4. Conversation state management (Redis)
     """
 
-    # System prompts
-    CHITCHAT_SYSTEM_PROMPT = """You are Pulse AI - a Vietnamese intelligent resident services assistant.
-Be friendly, helpful, and respond naturally in Vietnamese.
-
-## Your role
-- 24/7 virtual concierge for residents
-- Help with building management, billing, amenities, and support
-
-## Response style
-- Be polite and professional
-- Keep responses concise but helpful
-- Use natural Vietnamese language
-- For greetings: welcome and offer assistance
-- For questions: answer directly"""
-
-    AGENTIC_SYSTEM_PROMPT = """You are Pulse AI - a Vietnamese intelligent resident services assistant.
-You have access to tools for helping residents manage their apartment and services.
-
-## Available Tools
-You can call these tools to help users:
-- get_bills: View utility bills
-- get_bill_detail: View specific bill details
-- make_payment: Pay a bill
-- get_amenities: View available facilities
-- book_amenity: Book a facility
-- get_my_bookings: View user's bookings
-- cancel_booking: Cancel a booking
-- create_incident: Report an issue
-- get_my_incidents: View reported issues
-- get_packages: Check packages
-- get_announcements: View building announcements
-
-## Response Rules
-1. ALWAYS respond in Vietnamese
-2. Call tools when needed to get real data
-3. After getting tool results, summarize them clearly
-4. If parameters are missing, ask the user for clarification
-5. Be helpful and suggest next actions
-
-## User Context
-- Name: {user_name}
-- Unit: {unit}
-- Available capabilities: {capabilities}"""
-
-    STREAM_SYSTEM_PROMPT = """You are Pulse AI - a Vietnamese intelligent resident services assistant.
-Respond naturally in Vietnamese. Be helpful and concise.
-
-## User Context
-- Name: {user_name}
-- Unit: {unit}
-- Available capabilities: {capabilities}
-
-## Guidelines
-1. Respond in Vietnamese only
-2. Be helpful and professional
-3. If you need data, call the appropriate tool
-4. After tool results, summarize clearly"""
-
     def __init__(
         self,
         settings: Optional[Settings] = None,
         state_manager: Optional[StateManager] = None,
         action_generator: Optional[ActionGenerator] = None,
+        permission_mapper: Optional[PermissionMapper] = None,
     ):
         """Initialize CUX Orchestrator.
 
@@ -106,17 +68,38 @@ Respond naturally in Vietnamese. Be helpful and concise.
             settings: Application settings
             state_manager: State manager for conversation history
             action_generator: Action button generator
+            permission_mapper: Permission to tool mapper
         """
         self.settings = settings or Settings.get()
         self.state_manager = state_manager or StateManager(self.settings)
-        self.action_generator = action_generator or ActionGenerator()
+        self.permission_mapper = permission_mapper or PermissionMapper()
+
+        # Load prompts from YAML
+        self._prompts = _load_prompts(self.settings.prompts_path)
+
+        # Create AsyncOpenAI client for ActionGenerator
+        client_kwargs = {"api_key": self.settings.openai_api_key}
+        if self.settings.openai_api_base_url:
+            client_kwargs["base_url"] = self.settings.openai_api_base_url
+        self._openai_client = AsyncOpenAI(**client_kwargs)
+
+        # Get tool_permissions from PermissionMapper config
+        tool_permissions = self.permission_mapper._config.get("tool_to_permission", {})
+
+        # Initialize ActionGenerator with dependencies
+        self.action_generator = action_generator or ActionGenerator(
+            openai_client=self._openai_client,
+            prompts=self._prompts,
+            tool_permissions=tool_permissions,
+            model=self.settings.openai_model,
+        )
 
     async def process(
         self,
         message: str,
         session_id: str,
         user: Dict[str, Any],
-        pulse_token: Optional[str] = None,
+        pulse_client: Optional[PulseClient] = None,
         intent_type: str = "agentic_flow",
         attachments: Optional[List[Dict]] = None,
     ) -> ChatResponse:
@@ -126,7 +109,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
             message: User message
             session_id: Session identifier
             user: User payload from JWT
-            pulse_token: Pulse Backend token for API access
+            pulse_client: Authenticated PulseClient instance (injected via dependency)
             intent_type: Intent type (chitchat, agentic_flow, tool_call)
             attachments: Optional attachments (images, files)
 
@@ -151,23 +134,23 @@ Respond naturally in Vietnamese. Be helpful and concise.
         # Get conversation history
         history = await self.state_manager.get_history_for_llm(session_id, limit=10)
 
-        # Get user capabilities
-        capabilities = user.get("capabilities", [])
+        # Get user permissions
+        permissions = user.get("permissions", [])
 
         # Handle based on intent type
         if intent_type == "chitchat":
             response = await self._handle_chitchat(message, session_id, history)
         elif intent_type == "tool_call":
             response = await self._handle_tool_call_direct(
-                message, session_id, pulse_token
+                message, session_id, pulse_client, user
             )
         else:  # agentic_flow
             response = await self._handle_agentic_flow(
                 message,
                 session_id,
                 user,
-                pulse_token,
-                capabilities,
+                pulse_client,
+                permissions,
                 history,
                 attachments,
             )
@@ -182,7 +165,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
         message: str,
         session_id: str,
         user: Dict[str, Any],
-        pulse_token: Optional[str] = None,
+        pulse_client: Optional[PulseClient] = None,
         intent_type: str = "agentic_flow",
         attachments: Optional[List[Dict]] = None,
     ) -> AsyncGenerator[str, None]:
@@ -192,7 +175,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
             message: User message
             session_id: Session identifier
             user: User payload from JWT
-            pulse_token: Pulse Backend token for API access
+            pulse_client: Authenticated PulseClient instance (injected via dependency)
             intent_type: Intent type
             attachments: Optional attachments
 
@@ -216,19 +199,19 @@ Respond naturally in Vietnamese. Be helpful and concise.
         # Get history
         history = await self.state_manager.get_history_for_llm(session_id, limit=10)
 
-        capabilities = user.get("capabilities", [])
+        permissions = user.get("permissions", [])
 
         # Build messages for LLM
         messages = self._build_messages(history, message, attachments)
 
         # Get filtered tools
-        tools = get_tools_for_capabilities(capabilities)
+        tools = self.permission_mapper.get_filtered_tools(permissions)
 
         # Build system prompt
-        system_prompt = self.STREAM_SYSTEM_PROMPT.format(
+        system_prompt = self._prompts["stream"].format(
             user_name=user.get("name", "Cư dân"),
             unit=user.get("unit", "Resident"),
-            capabilities=", ".join(capabilities) if capabilities else "basic",
+            permissions=", ".join(f"{p['resource']}.{p['action']}" for p in permissions) if permissions else "basic",
         )
 
         messages.insert(0, {"role": "system", "content": system_prompt})
@@ -269,8 +252,21 @@ Respond naturally in Vietnamese. Be helpful and concise.
                 if chunk.choices[0].finish_reason:
                     break
 
+            # Log first stream response
+            logger.debug(
+                "llm_stream_response",
+                context="stream_first_call",
+                session_id=session_id,
+                accumulated_content_length=len(accumulated_content),
+                tool_calls_made=[
+                    {"name": tc.function.name, "arguments": tc.function.arguments}
+                    for tc in tool_calls_made
+                ],
+                finish_reason=chunk.choices[0].finish_reason if chunk.choices else None,
+            )
+
             # If tools were called, execute them and continue
-            if tool_calls_made and pulse_token:
+            if tool_calls_made and pulse_client:
                 # Execute tools
                 tool_results = []
                 for tc in tool_calls_made:
@@ -294,8 +290,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
                         result = await execute_tool(
                             tool_name,
                             params,
-                            pulse_token,
-                            self.settings.pulse_backend_url,
+                            pulse_client,
                         )
                         tool_results.append(
                             {
@@ -364,10 +359,20 @@ Respond naturally in Vietnamese. Be helpful and concise.
                     if chunk.choices[0].finish_reason:
                         break
 
+                # Log final stream response
+                logger.debug(
+                    "llm_stream_response",
+                    context="stream_final_response",
+                    session_id=session_id,
+                    accumulated_content_length=len(accumulated_content),
+                    finish_reason=chunk.choices[0].finish_reason if chunk.choices else None,
+                )
+
         # Generate actions
-        actions = self.action_generator.generate_actions(
+        actions = await self.action_generator.generate_actions(
             last_tool=last_tool_name,
-            capabilities=capabilities,
+            permissions=permissions,
+            last_message=accumulated_content,
         )
 
         # Yield actions event
@@ -389,6 +394,57 @@ Respond naturally in Vietnamese. Be helpful and concise.
         )
         yield event.to_sse()
 
+    def _parse_agentic_json_response(
+        self,
+        content: str,
+    ) -> tuple:
+        """Parse the agentic LLM JSON response into message and actions.
+
+        Args:
+            content: Raw string content from the LLM response.
+
+        Returns:
+            Tuple of (message: str, actions: List[Dict]).
+        """
+        # Strip markdown code block wrapping if present (```...```)
+        stripped = content.strip()
+        code_block_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", stripped, re.DOTALL)
+        if code_block_match:
+            stripped = code_block_match.group(1).strip()
+        else:
+            # Try to find first { ... } JSON object even without code block
+            json_match = re.search(r"\{.*\}", stripped, re.DOTALL)
+            if json_match:
+                stripped = json_match.group(0)
+
+        try:
+            parsed = json.loads(stripped)
+            message = parsed.get("message", content)
+            actions = parsed.get("actions", [])
+
+            if not isinstance(actions, list):
+                logger.warning("agentic_actions_not_list", actions_type=type(actions).__name__)
+                return message, []
+
+            validated = []
+            for action in actions[:3]:
+                if isinstance(action, dict) and "tool" in action:
+                    validated.append({
+                        "tool": action["tool"],
+                        "params": action.get("params", {}),
+                        "allowed": action.get("allowed", True),
+                    })
+
+            return message, validated
+
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(
+                "agentic_json_parse_failed",
+                error=str(e),
+                content_preview=content[:200],
+            )
+            return content, []
+
     async def _handle_chitchat(
         self,
         message: str,
@@ -405,17 +461,19 @@ Respond naturally in Vietnamese. Be helpful and concise.
         Returns:
             ChatResponse
         """
-        messages = [{"role": "system", "content": self.CHITCHAT_SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": self._prompts["chitchat"]}]
         messages.extend(history)
-        messages.append({"role": "user", "content": message})
 
         async with OpenAIClient(self.settings) as client:
             response = await client.chat_completion(messages=messages)
+            self._log_llm_response(response, context="chitchat", session_id=session_id)
 
             content = response.choices[0].message.content
 
-            # Get default actions
-            actions = self.action_generator.generate_actions()
+            # Get contextual actions
+            actions = await self.action_generator.generate_actions(
+                last_message=message,  # user's message as context
+            )
 
             return ChatResponse(
                 message=content,
@@ -428,8 +486,8 @@ Respond naturally in Vietnamese. Be helpful and concise.
         message: str,
         session_id: str,
         user: Dict[str, Any],
-        pulse_token: Optional[str],
-        capabilities: List[str],
+        pulse_client: Optional[PulseClient],
+        permissions: List[Dict[str, str]],
         history: List[Dict[str, str]],
         attachments: Optional[List[Dict]],
     ) -> ChatResponse:
@@ -439,8 +497,8 @@ Respond naturally in Vietnamese. Be helpful and concise.
             message: User message
             session_id: Session identifier
             user: User payload
-            pulse_token: Pulse Backend token
-            capabilities: User capabilities
+            pulse_client: Authenticated PulseClient instance
+            permissions: User permissions from API
             history: Conversation history
             attachments: Optional attachments
 
@@ -448,18 +506,17 @@ Respond naturally in Vietnamese. Be helpful and concise.
             ChatResponse
         """
         # Build system prompt
-        system_prompt = self.AGENTIC_SYSTEM_PROMPT.format(
+        system_prompt = self._prompts["agentic"].format(
             user_name=user.get("name", "Cư dân"),
             unit=user.get("unit", "Resident"),
-            capabilities=", ".join(capabilities) if capabilities else "basic",
+            permissions=", ".join(f"{p['resource']}.{p['action']}" for p in permissions) if permissions else "basic",
         )
 
         # Build messages
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
-        messages.append({"role": "user", "content": message})
 
-        # Add attachments if provided
+        # Add attachments if provided (override last user message with multimodal content)
         if attachments:
             # For multimodal support
             user_message = {"role": "user", "content": []}
@@ -479,7 +536,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
             messages[-1] = user_message
 
         # Get filtered tools
-        tools = get_tools_for_capabilities(capabilities)
+        tools = self.permission_mapper.get_filtered_tools(permissions)
 
         tool_calls_made = []
         last_tool_name = None
@@ -490,6 +547,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
                 messages=messages,
                 tools=tools,
             )
+            self._log_llm_response(response, context="agentic_first_call", session_id=session_id)
 
             assistant_message = response.choices[0].message
 
@@ -508,8 +566,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
                         result = await execute_tool(
                             tool_name,
                             params,
-                            pulse_token,
-                            self.settings.pulse_backend_url,
+                            pulse_client,
                         )
                         tool_results.append(
                             {
@@ -562,20 +619,20 @@ Respond naturally in Vietnamese. Be helpful and concise.
                 )
                 messages.extend(tool_results)
 
-                # Second LLM call with tool results
-                final_response = await client.chat_completion(messages=messages)
-                content = final_response.choices[0].message.content
+                # Second LLM call with tool results - force JSON output
+                final_response = await client.chat_completion(
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                )
+                self._log_llm_response(final_response, context="agentic_final_response", session_id=session_id)
+                raw_content = final_response.choices[0].message.content
+                message_text, actions = self._parse_agentic_json_response(raw_content)
             else:
-                content = assistant_message.content or "Tôi không hiểu yêu cầu của bạn. Bạn có thể diễn đạt lại không?"
-
-        # Generate actions
-        actions = self.action_generator.generate_actions(
-            last_tool=last_tool_name,
-            capabilities=capabilities,
-        )
+                raw_content = assistant_message.content or '{"message": "Tôi không hiểu yêu cầu của bạn. Bạn có thể diễn đạt lại không?", "actions": []}'
+                message_text, actions = self._parse_agentic_json_response(raw_content)
 
         return ChatResponse(
-            message=content,
+            message=message_text,
             actions=actions,
             session_id=session_id,
             tool_calls=tool_calls_made,
@@ -585,48 +642,63 @@ Respond naturally in Vietnamese. Be helpful and concise.
         self,
         action: str,
         session_id: str,
-        pulse_token: Optional[str],
+        pulse_client: Optional[PulseClient],
+        user: Dict[str, Any],
     ) -> ChatResponse:
         """Handle direct tool call (from UI action button).
 
+        Uses LLM to:
+        1. Check if action is valid and user has related permission
+        2. Decide which tool to call
+        3. Format response as markdown
+
         Args:
-            action: Action type to execute
+            action: Action type from UI (e.g., "view_bills", "report_incident")
             session_id: Session identifier
-            pulse_token: Pulse Backend token
+            pulse_client: Authenticated PulseClient instance
+            user: User payload with permissions
 
         Returns:
             ChatResponse
         """
-        # Map action types to tool names
-        action_to_tool = {
-            "view_bills": ("get_bills", {}),
-            "check_package": ("get_packages", {}),
-            "view_bookings": ("get_my_bookings", {}),
-            "view_incidents": ("get_my_incidents", {}),
-            "report_incident": ("create_incident", {}),
-            "book_amenity": ("get_amenities", {}),
-            "view_amenities": ("get_amenities", {}),
-        }
+        permissions = user.get("permissions", [])
 
-        if action not in action_to_tool:
+        # Use ActionGenerator to validate action and decide tool
+        tool_decision = await self.action_generator.resolve_action(action, permissions)
+
+        if not tool_decision.get("allowed"):
+            logger.info(
+                "action_not_allowed",
+                action=action,
+                reason=tool_decision.get("reason"),
+                user_id=user.get("sub"),
+            )
             return ChatResponse(
-                message="Tôi không thể thực hiện hành động này.",
+                message=tool_decision.get(
+                    "message",
+                    "Xin lỗi, tôi không hỗ trợ hành động này. Vui lòng thử hành động khác."
+                ),
                 session_id=session_id,
             )
 
-        tool_name, params = action_to_tool[action]
+        tool_name = tool_decision.get("tool")
+        params = tool_decision.get("params", {})
+
+        if not tool_name:
+            return ChatResponse(
+                message="Không thể xác định công cụ cho hành động này.",
+                session_id=session_id,
+            )
 
         try:
             result = await execute_tool(
                 tool_name,
                 params,
-                pulse_token,
-                self.settings.pulse_backend_url,
+                pulse_client,
             )
 
-            # Generate response based on tool result
-            # This could be enhanced with LLM summarization
-            message = self._summarize_tool_result(tool_name, result)
+            # Use ActionGenerator to format response as markdown
+            message = await self.action_generator.format_tool_result(action, tool_name, result)
 
             return ChatResponse(
                 message=message,
@@ -641,11 +713,45 @@ Respond naturally in Vietnamese. Be helpful and concise.
             )
 
         except Exception as e:
-            logger.error("direct_tool_call_failed", action=action, error=str(e))
+            logger.error("direct_tool_call_failed", action=action, tool=tool_name, error=str(e))
             return ChatResponse(
                 message=f"Không thể thực hiện hành động: {str(e)}",
                 session_id=session_id,
             )
+
+    def _log_llm_response(
+        self,
+        response: Any,
+        context: str,
+        session_id: str,
+    ) -> None:
+        """Log LLM response details for debugging.
+
+        Args:
+            response: OpenAI chat completion response object
+            context: Description of the call context
+            session_id: Session identifier
+        """
+        choice = response.choices[0] if response.choices else None
+
+        logger.debug(
+            "llm_response",
+            context=context,
+            session_id=session_id,
+            model=getattr(response, "model", None),
+            finish_reason=choice.finish_reason if choice else None,
+            content=choice.message.content if choice and choice.message else None,
+            tool_calls=[
+                {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                }
+                for tc in (choice.message.tool_calls or [])
+            ]
+            if choice and choice.message and choice.message.tool_calls
+            else None,
+            usage=response.usage.model_dump() if response.usage else None,
+        )
 
     def _build_messages(
         self,
@@ -656,7 +762,7 @@ Respond naturally in Vietnamese. Be helpful and concise.
         """Build messages list for LLM.
 
         Args:
-            history: Conversation history
+            history: Conversation history (already contains current user message)
             message: Current user message
             attachments: Optional attachments
 
@@ -665,8 +771,8 @@ Respond naturally in Vietnamese. Be helpful and concise.
         """
         messages = list(history)
 
-        if attachments:
-            # Multimodal message
+        # If attachments, modify last user message to be multimodal
+        if attachments and messages and messages[-1].get("role") == "user":
             content = [{"type": "text", "text": message}]
             for att in attachments:
                 if att.get("type") == "image" and att.get("data"):
@@ -678,53 +784,6 @@ Respond naturally in Vietnamese. Be helpful and concise.
                             },
                         }
                     )
-            messages.append({"role": "user", "content": content})
-        else:
-            messages.append({"role": "user", "content": message})
+            messages[-1]["content"] = content
 
         return messages
-
-    def _summarize_tool_result(
-        self,
-        tool_name: str,
-        result: Any,
-    ) -> str:
-        """Generate a summary of tool result (simple version without LLM).
-
-        Args:
-            tool_name: Name of the tool that was executed
-            result: Tool execution result
-
-        Returns:
-            Summary string
-        """
-        if tool_name == "get_bills":
-            bills = result if isinstance(result, list) else []
-            if not bills:
-                return "Bạn không có hóa đơn nào."
-            unpaid = [b for b in bills if b.get("status") == "Unpaid"]
-            if unpaid:
-                total = sum(b.get("amount", 0) for b in unpaid)
-                return f"Bạn có {len(unpaid)} hóa đơn chưa thanh toán với tổng số {total:,.0f}đ."
-            return f"Bạn có {len(bills)} hóa đơn đã thanh toán."
-
-        if tool_name == "get_packages":
-            packages = result if isinstance(result, list) else []
-            if not packages:
-                return "Hiện tại không có bưu kiện nào cho căn hộ của bạn."
-            return f"Bạn có {len(packages)} bưu kiện."
-
-        if tool_name == "get_my_bookings":
-            bookings = result if isinstance(result, list) else []
-            if not bookings:
-                return "Bạn chưa có đặt chỗ nào."
-            return f"Bạn có {len(bookings)} đặt chỗ."
-
-        if tool_name == "get_amenities":
-            amenities = result if isinstance(result, list) else []
-            if not amenities:
-                return "Không có tiện ích nào để đặt."
-            return f"Có {len(amenities)} tiện ích có sẵn để đặt."
-
-        # Default fallback
-        return "Đã thực hiện thành công."

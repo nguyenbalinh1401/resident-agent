@@ -126,7 +126,16 @@ class StateManager:
             List of message dicts ready for LLM consumption
         """
         messages = await self.get_history(session_id, limit=limit)
-        return [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+        formatted = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+
+        logger.debug(
+            "history_for_llm",
+            session_id=session_id,
+            message_count=len(formatted),
+            limit=limit,
+        )
+
+        return formatted
 
     async def clear_history(self, session_id: str) -> None:
         """Clear conversation history for a session.
