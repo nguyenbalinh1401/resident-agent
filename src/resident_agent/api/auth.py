@@ -57,6 +57,15 @@ async def login(request: LoginRequest) -> TokenResponse:
                 role=login_response.role,
             )
 
+            # Fetch user permissions from Pulse Backend
+            permissions = []
+            try:
+                permissions = await client.get_permissions()
+                logger.info("permissions_fetched", count=len(permissions))
+            except PulseAPIError as e:
+                logger.warning("permissions_fetch_failed", error=str(e))
+                # Continue without permissions - user will have basic access only
+
             # Create Resident Agent JWT with user info
             jwt_handler = JWTHandler(settings)
 
@@ -68,6 +77,7 @@ async def login(request: LoginRequest) -> TokenResponse:
                 "email": login_response.email,
                 "role": login_response.role,
                 "pulse_token": login_response.token,  # Store Pulse token for later use
+                "permissions": permissions,
             }
 
             access_token = jwt_handler.create_access_token(token_data)
@@ -129,6 +139,7 @@ async def refresh_token(
         "email": user.get("email"),
         "role": user.get("role"),
         "pulse_token": user.get("pulse_token"),
+        "permissions": user.get("permissions", []),
     }
 
     access_token = jwt_handler.create_access_token(token_data)
@@ -161,4 +172,5 @@ async def get_me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, 
         "name": user.get("name"),
         "email": user.get("email"),
         "role": user.get("role"),
+        "permissions": user.get("permissions", []),
     }

@@ -535,7 +535,7 @@ class PulseClient:
 
     # ==================== Announcements ====================
 
-    async def get_announcements(self, limit: int = 10) -> List[Dict]:
+    async def get_announcements(self) -> List[Dict]:
         """Get building announcements.
 
         Args:
@@ -544,7 +544,7 @@ class PulseClient:
         Returns:
             List of announcements
         """
-        return await self._request("GET", "/api/Announcements", params={"limit": limit})
+        return await self._request("GET", "/api/Announcements")
 
     # ==================== User Roles & Permissions ====================
 
@@ -585,6 +585,23 @@ class PulseClient:
         """
         logger.info("fetching_actions")
         return await self._request("GET", "/api/Actions")
+
+    async def get_permissions(self) -> List[Dict[str, str]]:
+        """Get permissions for current authenticated user.
+
+        This is used by Chat API to filter available tools based on user permissions.
+
+        Returns:
+            List of permissions with format [{"resource": str, "action": str}]
+
+        Example:
+            async with PulseClient(config) as client:
+                await client.login(phone, password)
+                permissions = await client.get_permissions()
+                # [{"resource": "Bills", "action": "Read"}, ...]
+        """
+        logger.info("fetching_permissions")
+        return await self._request("GET", "/api/Permissions")
 
 
 # Convenience function for quick usage

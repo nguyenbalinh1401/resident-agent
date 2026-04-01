@@ -1,6 +1,6 @@
 """FastAPI dependencies for authentication."""
 
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, AsyncGenerator
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import structlog
@@ -8,6 +8,7 @@ import structlog
 from resident_agent.auth.jwt_handler import JWTHandler
 from resident_agent.core.config import Settings
 from resident_agent.core.exceptions import AuthenticationError
+from resident_agent.clients.pulse_client import PulseClient, PulseConfig
 
 logger = structlog.get_logger()
 
@@ -141,3 +142,59 @@ async def get_user_with_pulse_token(
         HTTPException: If Pulse token is required but not provided
     """
     return user, pulse_token
+
+
+async def get_pulse_client(
+    user: Dict[str, Any] = Depends(get_current_user),
+    pulse_token: Optional[str] = Depends(get_pulse_token),
+    settings: Settings = Depends(lambda: Settings.get()),
+) -> AsyncGenerator[PulseClient, None]:
+    """Create and yield PulseClient with token from user session.
+
+    This dependency:
+    1. Extracts token from header or JWT payload
+    2. Creates PulseClient with the token
+    3. Yields the client for use in endpoints
+    4. Cleans up the client after request completes
+
+    Args:
+        user: Current user payload from JWT
+        pulse_token: Optional Pulse Backend token from header
+        settings: Application settings
+
+    Yields:
+        PulseClient: Authenticated Pulse client
+
+    Raises:
+        HTTPException: If Pulse token is missing
+    """
+    # Get token from header or JWT payload
+    token = pulse_token or user.get("pulse_token")
+
+    if not token:
+        logger.warning("pulse_token_missing", user_id=user.get("sub"))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Pulse authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    config = PulseConfig(
+        base_url=settings.pulse_backend_url,
+        token=token,
+    )
+
+    client = PulseClient(config)
+    await client.__aenter__()
+
+    logger.debug(
+        "pulse_client_created",
+        user_id=user.get("sub"),
+        base_url=settings.pulse_backend_url,
+    )
+
+    try:
+        yield client
+    finally:
+        await client.__aexit__(None, None, None)
+        logger.debug("pulse_client_closed", user_id=user.get("sub"))
