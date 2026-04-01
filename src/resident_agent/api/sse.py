@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 import structlog
 
-from resident_agent.auth.dependencies import get_current_user, get_pulse_token
+from resident_agent.auth.dependencies import get_current_user, get_pulse_client
 from resident_agent.cux.orchestrator import CuxOrchestrator
 from resident_agent.core.config import Settings
+from resident_agent.clients.pulse_client import PulseClient
 
 logger = structlog.get_logger()
 
@@ -25,7 +26,7 @@ async def chat_stream(
     session_id: Optional[str] = Query(None, description="Session identifier"),
     intent_type: str = Query("agentic_flow", description="Intent type: chitchat, agentic_flow, tool_call"),
     user: Dict[str, Any] = Depends(get_current_user),
-    pulse_token: Optional[str] = Depends(get_pulse_token),
+    pulse_client: PulseClient = Depends(get_pulse_client),
 ) -> StreamingResponse:
     """Stream chat response via SSE.
 
@@ -42,7 +43,7 @@ async def chat_stream(
         session_id: Optional session identifier
         intent_type: Intent type (chitchat, agentic_flow, tool_call)
         user: Current user from JWT
-        pulse_token: Optional Pulse Backend token
+        pulse_client: Authenticated PulseClient instance (injected)
 
     Returns:
         StreamingResponse with SSE events
@@ -58,10 +59,6 @@ async def chat_stream(
         intent_type=intent_type,
     )
 
-    # Get Pulse token from user payload if not in header
-    if not pulse_token:
-        pulse_token = user.get("pulse_token")
-
     # Initialize orchestrator
     settings = Settings.get()
     orchestrator = CuxOrchestrator(settings)
@@ -73,7 +70,7 @@ async def chat_stream(
                 message=message,
                 session_id=session_id,
                 user=user,
-                pulse_token=pulse_token,
+                pulse_client=pulse_client,
                 intent_type=intent_type,
             ):
                 yield sse_event

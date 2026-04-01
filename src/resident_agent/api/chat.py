@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, Header
 import structlog
 
 from resident_agent.schemas.chat_schemas import ChatRequest, ChatResponse
-from resident_agent.auth.dependencies import get_current_user, get_pulse_token
+from resident_agent.auth.dependencies import get_current_user, get_pulse_client
 from resident_agent.cux.orchestrator import CuxOrchestrator
 from resident_agent.core.config import Settings
+from resident_agent.clients.pulse_client import PulseClient
 
 logger = structlog.get_logger()
 
@@ -24,14 +25,14 @@ router = APIRouter()
 async def chat(
     request: ChatRequest,
     user: Dict[str, Any] = Depends(get_current_user),
-    pulse_token: Optional[str] = Depends(get_pulse_token),
+    pulse_client: PulseClient = Depends(get_pulse_client),
 ) -> ChatResponse:
     """Process a chat message.
 
     Args:
         request: Chat request with message and optional session_id
         user: Current user from JWT
-        pulse_token: Optional Pulse Backend token
+        pulse_client: Authenticated PulseClient instance (injected)
 
     Returns:
         ChatResponse with message, actions, and session_id
@@ -44,23 +45,18 @@ async def chat(
         session_id=session_id,
         user_id=user.get("sub"),
         message_preview=request.message[:50],
-        has_pulse_token=pulse_token is not None,
     )
-
-    # Get Pulse token from user payload if not in header
-    if not pulse_token:
-        pulse_token = user.get("pulse_token")
 
     # Initialize orchestrator
     settings = Settings.get()
     orchestrator = CuxOrchestrator(settings)
 
-    # Process message
+    # Process message with injected PulseClient
     response = await orchestrator.process(
         message=request.message,
         session_id=session_id,
         user=user,
-        pulse_token=pulse_token,
+        pulse_client=pulse_client,
         intent_type=request.intent_type or "agentic_flow",
         attachments=request.attachments,
     )
@@ -85,7 +81,7 @@ async def chat(
 async def execute_action(
     request: ChatRequest,
     user: Dict[str, Any] = Depends(get_current_user),
-    pulse_token: Optional[str] = Depends(get_pulse_token),
+    pulse_client: PulseClient = Depends(get_pulse_client),
 ) -> ChatResponse:
     """Execute an action directly.
 
@@ -95,7 +91,7 @@ async def execute_action(
     Args:
         request: Chat request with action field set
         user: Current user from JWT
-        pulse_token: Optional Pulse Backend token
+        pulse_client: Authenticated PulseClient instance (injected)
 
     Returns:
         ChatResponse with action results
@@ -110,20 +106,16 @@ async def execute_action(
         action=action,
     )
 
-    # Get Pulse token
-    if not pulse_token:
-        pulse_token = user.get("pulse_token")
-
     # Initialize orchestrator
     settings = Settings.get()
     orchestrator = CuxOrchestrator(settings)
 
-    # Process as tool_call intent
+    # Process as tool_call intent with injected PulseClient
     response = await orchestrator.process(
         message=request.message or f"Execute action: {action}",
         session_id=session_id,
         user=user,
-        pulse_token=pulse_token,
+        pulse_client=pulse_client,
         intent_type="tool_call",
         attachments=request.attachments,
     )
