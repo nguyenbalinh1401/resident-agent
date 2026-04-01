@@ -640,6 +640,9 @@
             sessionId: null
         };
 
+        // Current active session ID - persists across messages in the same conversation
+        let currentSessionId = null;
+
         // ========== AuthManager Class ==========
         class AuthManager {
             constructor() {
@@ -859,13 +862,14 @@
                 }
             }
 
-            async executeAction(action) {
+            async executeAction(action, sessionId) {
                 // API: POST /chat/action with ChatRequest body containing action field
-                const actionType = action.action_type || action.id || action.action_id;
+                const actionType = action.tool || action.action_type || action.id || action.action_id;
                 const body = {
                     action: actionType,
                     message: action.label || actionType,
                 };
+                if (sessionId) body.session_id = sessionId;
                 if (action.params) {
                     body.params = action.params;
                 }
@@ -933,7 +937,7 @@
                     options.actions.forEach(action => {
                         const btn = document.createElement('button');
                         btn.className = `action-btn ${action.style || 'secondary'}`;
-                        btn.textContent = action.label;
+                        btn.textContent = action.tool;
                         btn.onclick = () => window.executeAction(action);
                         actionsContainer.appendChild(btn);
                     });
@@ -1071,7 +1075,9 @@
             ui.setInputEnabled(false);
 
             try {
-                const sessionId = CONFIG.sessionId || `web_${Date.now()}`;
+                // Use configured session ID, or existing session, or create new one
+                const sessionId = CONFIG.sessionId || currentSessionId || `web_${Date.now()}`;
+                currentSessionId = currentSessionId || CONFIG.sessionId || sessionId;
 
                 if (CONFIG.chatMode === 'streaming') {
                     // SSE Streaming mode
@@ -1108,7 +1114,7 @@
                                 actions.forEach(action => {
                                     const btn = document.createElement('button');
                                     btn.className = `action-btn ${action.style || 'secondary'}`;
-                                    btn.textContent = action.label;
+                                    btn.textContent = action.tool;
                                     btn.onclick = () => executeAction(action);
                                     actionsContainer.appendChild(btn);
                                 });
@@ -1163,12 +1169,12 @@
 
         // Execute action
         window.executeAction = async function(action) {
-            ui.addMessage(action.label, 'user');
+            ui.addMessage(action.label || action.tool, 'user');
             ui.setInputEnabled(false);
             ui.showTypingIndicator();
 
             try {
-                const response = await chatClient.executeAction(action);
+                const response = await chatClient.executeAction(action, currentSessionId);
                 ui.hideTypingIndicator();
                 ui.addMessage(response.message, 'bot', { actions: response.actions });
             } catch (error) {
@@ -1201,7 +1207,11 @@
         saveSettingsBtn.addEventListener('click', () => {
             CONFIG.apiBase = document.getElementById('api-url').value;
             CONFIG.chatMode = document.querySelector('input[name="chat-mode"]:checked').value;
-            CONFIG.sessionId = document.getElementById('session-id').value || null;
+            const newSessionId = document.getElementById('session-id').value || null;
+            if (newSessionId !== CONFIG.sessionId) {
+                currentSessionId = newSessionId;
+            }
+            CONFIG.sessionId = newSessionId;
             CONFIG.autoRefresh = document.getElementById('auto-refresh').checked;
 
             ui.updateMode(CONFIG.chatMode);
@@ -1215,12 +1225,14 @@
 
         clearChatBtn.addEventListener('click', () => {
             ui.clearChat();
+            currentSessionId = null;
             ui.addMessage('Chat cleared. How can I help you?', 'bot');
         });
 
         // Logout
         logoutBtn.addEventListener('click', () => {
             authManager.clearTokens();
+            currentSessionId = null;
             ui.updateConnectionStatus('disconnected');
             ui.setInputEnabled(false);
             ui.clearChat();
