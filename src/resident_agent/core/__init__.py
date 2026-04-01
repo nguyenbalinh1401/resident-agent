@@ -1,8 +1,8 @@
 """Core module - Configuration, OpenAI client, and exceptions."""
 
-from .config import Settings
-from .openai_client import OpenAIClient
-from .exceptions import (
+from resident_agent.core.config import Settings
+from resident_agent.core.openai_client import OpenAIClient
+from resident_agent.core.exceptions import (
     PulseAPIError,
     AuthenticationError,
     CuxError,
