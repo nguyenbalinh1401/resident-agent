@@ -1,0 +1,61 @@
+# Permission to Tool Mapping Configuration
+# Used by PermissionMapper to convert API permissions to tools
+
+# Map from API permission (resource.action) to tool names
+permission_to_tools:
+  # Profile
+  "Users.Read": ["get_profile"]
+  "Users.Write": ["update_contact"]
+
+  # Bookings/Amenities
+  "Bookings.Read": ["get_amenities", "get_amenity_detail", "get_my_bookings"]
+  "Bookings.Write": ["book_amenity", "cancel_booking"]
+
+  # Tickets/Incidents
+  "Tickets.Read": ["get_my_incidents", "get_incident_detail"]
+  "Tickets.Write": ["create_incident"]
+
+  # Bills (future - when API adds these)
+  "Bills.Read": ["get_bills", "get_bill_detail"]
+  "Bills.Write": ["make_payment"]
+
+  # Packages (future)
+  "Packages.Read": ["get_packages"]
+
+  # Notifications (future)
+  "Notifications.Read": ["get_announcements"]
+
+# Tools that everyone can access (even without specific permissions)
+default_tools:
+  - "get_profile"
+
+# Reverse mapping: tool → permission
+# Used for permission check when tool is called directly
+tool_to_permission:
+  # Bills
+  get_bills: "Bills.Read"
+  get_bill_detail: "Bills.Read"
+  make_payment: "Bills.Write"
+
+  # Packages
+  get_packages: "Packages.Read"
+  get_package_detail: "Packages.Read"
+
+  # Bookings/Amenities
+  get_amenities: null  # Public - no permission required
+  get_amenity_detail: null  # Public
+  get_my_bookings: "Bookings.Read"
+  book_amenity: "Bookings.Write"
+  cancel_booking: "Bookings.Write"
+
+  # Tickets/Incidents
+  get_my_incidents: "Tickets.Read"
+  get_incident_detail: "Tickets.Read"
+  create_incident: "Tickets.Write"
+
+  # Notifications
+  get_announcements: null  # Public
+
+  # User
+  get_profile: null  # No permission required
+  update_contact: "Users.Write"
