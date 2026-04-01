@@ -111,7 +111,7 @@ class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
 
     message: str = Field(..., description="AI response message")
-    actions: List[ActionButton] = Field(
+    actions: List[Dict] = Field(
         default_factory=list,
         description="Suggested action buttons",
     )

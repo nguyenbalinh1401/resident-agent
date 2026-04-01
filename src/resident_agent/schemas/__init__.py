@@ -1,7 +1,7 @@
 """Schemas module - Pydantic models for request/response validation."""
 
-from .auth_schemas import LoginRequest, TokenResponse, RefreshTokenRequest
-from .chat_schemas import (
+from resident_agent.schemas.auth_schemas import LoginRequest, TokenResponse, RefreshTokenRequest
+from resident_agent.schemas.chat_schemas import (
     Attachment,
     ChatRequest,
     ChatResponse,

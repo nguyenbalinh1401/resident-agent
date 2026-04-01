@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any, AsyncGenerator
 import structlog
 from openai import AsyncOpenAI
 
-from .config import Settings
+from resident_agent.core.config import Settings
 
 logger = structlog.get_logger()
 
