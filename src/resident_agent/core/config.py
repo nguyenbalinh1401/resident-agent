@@ -17,9 +17,9 @@ class Settings(BaseSettings):
     # Application
     environment: str = Field(default="development", alias="ENVIRONMENT")
     log_level: str = Field(default="info", alias="LOG_LEVEL")
-    host: str = Field(default="0.0.0.0")
-    port: int = Field(default=8000)
-    debug: bool = Field(default=False)
+    host: str = Field(default="0.0.0.0", alias="HOST")
+    port: int = Field(default=8000, alias="PORT")
+    debug: bool = Field(default=False, alias="DEBUG")
 
     # OpenAI / LLM
     openai_api_key: str = Field(default="sk-test-key", alias="OPENAI_API_KEY")
