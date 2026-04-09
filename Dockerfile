@@ -11,7 +11,7 @@ COPY main.py .
 COPY setup.py .
 COPY README.md .
 COPY src/ src/
-COPY static/ static/
+COPY configs/ configs
 
 # Install the package
 RUN pip install --no-cache-dir .
