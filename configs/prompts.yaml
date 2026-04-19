@@ -24,15 +24,33 @@ agentic: |
   You can call these tools to help users:
   - get_bills: View utility bills
   - get_bill_detail: View specific bill details
-  - make_payment: Pay a bill
+  - get_payment_history: View payment transaction history
   - get_amenities: View available facilities
+  - get_amenity_detail: View facility details
+  - get_amenity_categories: View facility categories
   - book_amenity: Book a facility
   - get_my_bookings: View user's bookings
   - cancel_booking: Cancel a booking
   - create_incident: Report an issue
   - get_my_incidents: View reported issues
+  - get_incident_detail: View issue details
+  - get_ticket_comments: View issue comments/updates
+  - add_ticket_comment: Add comment to an issue
+  - get_ticket_categories: View issue categories
   - get_packages: Check packages
+  - get_package_detail: View package details
+  - delegate_pickup: Delegate package pickup to someone else
+  - revoke_pickup_delegation: Cancel pickup delegation
   - get_announcements: View building announcements
+  - get_notifications: View notifications
+  - get_unread_notification_count: View unread notification count
+  - mark_notification_read: Mark a notification as read
+  - mark_all_notifications_read: Mark all notifications as read
+  - get_surveys: View available surveys
+  - get_my_requests: View resident requests (cards, vehicles, visitors)
+  - get_request_detail: View request details
+  - get_request_types: View available request types
+  - register_visitor: Register a visitor
 
   ## Response Rules
   1. Call tools when needed to get real data
@@ -50,7 +68,7 @@ agentic: |
   Set "allowed" to true for all (permissions are checked separately).
 
   Example:
-  {{"message": "Bạn có 2 hóa đơn chưa thanh toán...", "actions": [{{"tool": "get_bill_detail", "params": {{"bill_id": "HD001"}}, "allowed": true}}, {{"tool": "get_packages", "params": {{}}, "allowed": true}}, {{"tool": "get_announcements", "params": {{}}, "allowed": true}}]}}
+  {{"message": "Bạn có 2 hóa đơn chưa thanh toán...", "actions": [{{"tool": "get_bill_detail", "params": {{"bill_id": "HD001"}}, "allowed": true}}, {{"tool": "get_payment_history", "params": {{}}, "allowed": true}}, {{"tool": "get_announcements", "params": {{}}, "allowed": true}}]}}
 
   ## User Context
   - Name: {user_name}
@@ -83,17 +101,34 @@ action_router: |
   Available tools and their required permissions:
   - get_bills (Bills.Read): Get list of bills
   - get_bill_detail (Bills.Read): Get bill detail
-  - make_payment (Bills.Write): Make a payment
+  - get_payment_history (Payments.Read): Get payment history
   - get_packages (Packages.Read): Get packages
+  - get_package_detail (Packages.Read): Get package detail
+  - delegate_pickup (Packages.Write): Delegate package pickup
+  - revoke_pickup_delegation (Packages.Write): Cancel pickup delegation
   - get_amenities (Public): Get amenities list
   - get_amenity_detail (Public): Get amenity detail
+  - get_amenity_categories (Public): Get amenity categories
   - get_my_bookings (Bookings.Read): Get user's bookings
   - book_amenity (Bookings.Write): Book an amenity
   - cancel_booking (Bookings.Write): Cancel a booking
   - get_my_incidents (Tickets.Read): Get user's incidents
   - get_incident_detail (Tickets.Read): Get incident detail
+  - get_ticket_comments (Tickets.Read): Get issue comments
   - create_incident (Tickets.Write): Create a new incident
+  - add_ticket_comment (Tickets.Write): Add comment to issue
+  - get_ticket_categories (Public): Get issue categories
   - get_announcements (Public): Get announcements
+  - get_notifications (Notifications.Read): Get notifications
+  - get_unread_notification_count (Notifications.Read): Get unread count
+  - mark_notification_read (Notifications.Write): Mark notification as read
+  - mark_all_notifications_read (Notifications.Write): Mark all as read
+  - get_surveys (Surveys.Read): Get surveys
+  - submit_survey_answer (Surveys.Write): Submit survey answer
+  - register_visitor (Visitors.Write): Register a visitor
+  - get_my_requests (Requests.Read): Get resident requests
+  - get_request_detail (Requests.Read): Get request detail
+  - get_request_types (Public): Get request types
   - get_profile (Public): Get user profile
   - update_contact (Users.Write): Update contact info
 
@@ -143,18 +178,29 @@ action_suggester: |
   ## Available tools
   - get_bills: View utility bills
   - get_bill_detail: View specific bill details
-  - make_payment: Pay a bill
+  - get_payment_history: View payment transaction history
   - get_packages: Check packages
+  - get_package_detail: View package details
+  - delegate_pickup: Delegate package pickup
   - get_amenities: View available facilities
   - get_amenity_detail: View facility details
+  - get_amenity_categories: View facility categories
   - get_my_bookings: View user's bookings
   - book_amenity: Book a facility
   - cancel_booking: Cancel a booking
   - create_incident: Report an issue
   - get_my_incidents: View reported issues
   - get_incident_detail: View issue details
+  - get_ticket_comments: View issue comments
+  - get_ticket_categories: View issue categories
+  - get_notifications: View notifications
+  - get_unread_notification_count: View unread notification count
   - get_announcements: View building announcements
-  - get_profile: View user profile
+  - get_surveys: View surveys
+  - get_my_requests: View resident requests
+  - get_request_types: View request types
+  - register_visitor: Register a visitor
+  - get_profile: View profile
 
   Respond in JSON format:
   {{"actions": [

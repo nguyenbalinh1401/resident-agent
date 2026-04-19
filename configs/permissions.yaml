@@ -12,22 +12,39 @@ permission_to_tools:
   "Bookings.Write": ["book_amenity", "cancel_booking"]
 
   # Tickets/Incidents
-  "Tickets.Read": ["get_my_incidents", "get_incident_detail"]
-  "Tickets.Write": ["create_incident"]
+  "Tickets.Read": ["get_my_incidents", "get_incident_detail", "get_ticket_comments"]
+  "Tickets.Write": ["create_incident", "add_ticket_comment"]
 
-  # Bills (future - when API adds these)
+  # Bills
   "Bills.Read": ["get_bills", "get_bill_detail"]
-  "Bills.Write": ["make_payment"]
 
-  # Packages (future)
-  "Packages.Read": ["get_packages"]
+  # Payments (read-only)
+  "Payments.Read": ["get_payment_history"]
 
-  # Notifications (future)
-  "Notifications.Read": ["get_announcements"]
+  # Packages
+  "Packages.Read": ["get_packages", "get_package_detail"]
+  "Packages.Write": ["delegate_pickup", "revoke_pickup_delegation"]
+
+  # Notifications
+  "Notifications.Read": ["get_notifications", "get_announcements", "get_unread_notification_count"]
+  "Notifications.Write": ["mark_notification_read", "mark_all_notifications_read"]
+
+  # Resident Requests
+  "Requests.Read": ["get_my_requests", "get_request_detail"]
+
+  # Surveys
+  "Surveys.Read": ["get_surveys"]
+  "Surveys.Write": ["submit_survey_answer"]
+
+  # Visitors
+  "Visitors.Write": ["register_visitor"]
 
 # Tools that everyone can access (even without specific permissions)
 default_tools:
   - "get_profile"
+  - "get_ticket_categories"
+  - "get_amenity_categories"
+  - "get_request_types"
 
 # Reverse mapping: tool → permission
 # Used for permission check when tool is called directly
@@ -35,11 +52,15 @@ tool_to_permission:
   # Bills
   get_bills: "Bills.Read"
   get_bill_detail: "Bills.Read"
-  make_payment: "Bills.Write"
+
+  # Payments
+  get_payment_history: "Payments.Read"
 
   # Packages
   get_packages: "Packages.Read"
   get_package_detail: "Packages.Read"
+  delegate_pickup: "Packages.Write"
+  revoke_pickup_delegation: "Packages.Write"
 
   # Bookings/Amenities
   get_amenities: null  # Public - no permission required
@@ -52,9 +73,31 @@ tool_to_permission:
   get_my_incidents: "Tickets.Read"
   get_incident_detail: "Tickets.Read"
   create_incident: "Tickets.Write"
+  get_ticket_comments: "Tickets.Read"
+  add_ticket_comment: "Tickets.Write"
 
   # Notifications
   get_announcements: null  # Public
+  get_notifications: "Notifications.Read"
+  get_unread_notification_count: "Notifications.Read"
+  mark_notification_read: "Notifications.Write"
+  mark_all_notifications_read: "Notifications.Write"
+
+  # Reference Data (public)
+  get_ticket_categories: null
+  get_amenity_categories: null
+  get_request_types: null
+
+  # Surveys
+  get_surveys: "Surveys.Read"
+  submit_survey_answer: "Surveys.Write"
+
+  # Visitors
+  register_visitor: "Visitors.Write"
+
+  # Resident Requests
+  get_my_requests: "Requests.Read"
+  get_request_detail: "Requests.Read"
 
   # User
   get_profile: null  # No permission required

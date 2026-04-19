@@ -394,6 +394,33 @@ class PulseClient:
         """
         return await self._request("GET", f"/api/Tickets/{ticket_id}")
 
+    async def get_ticket_comments(self, ticket_id: str) -> List[Dict]:
+        """Get comments for a ticket.
+
+        Args:
+            ticket_id: Ticket ID
+
+        Returns:
+            List of comments
+        """
+        return await self._request("GET", f"/api/Tickets/{ticket_id}/comments")
+
+    async def add_ticket_comment(self, ticket_id: str, content: str) -> Dict[str, Any]:
+        """Add a comment to a ticket.
+
+        Args:
+            ticket_id: Ticket ID
+            content: Comment content
+
+        Returns:
+            Created comment
+        """
+        return await self._request(
+            "POST",
+            f"/api/Tickets/{ticket_id}/comments",
+            json_data={"content": content},
+        )
+
     # ==================== Packages ====================
 
     async def get_packages(self, unit_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
@@ -412,7 +439,7 @@ class PulseClient:
         if status:
             params["status"] = status
 
-        return await self._request("GET", "/api/Packages", params=params)
+        return await self._request("GET", "/api/Parcels", params=params)
 
     async def get_package(self, package_id: str) -> Dict[str, Any]:
         """Get package details.
@@ -423,7 +450,40 @@ class PulseClient:
         Returns:
             Package details
         """
-        return await self._request("GET", f"/api/Packages/{package_id}")
+        return await self._request("GET", f"/api/Parcels/{package_id}")
+
+    async def delegate_pickup(
+        self, parcel_id: str, delegate_name: str, delegate_phone: str
+    ) -> Dict[str, Any]:
+        """Delegate parcel pickup to another person.
+
+        Args:
+            parcel_id: Parcel ID
+            delegate_name: Name of the delegate
+            delegate_phone: Phone number of the delegate
+
+        Returns:
+            Delegation result
+        """
+        return await self._request(
+            "POST",
+            f"/api/Parcels/{parcel_id}/delegate",
+            json_data={
+                "delegateName": delegate_name,
+                "delegatePhone": delegate_phone,
+            },
+        )
+
+    async def revoke_pickup_delegation(self, parcel_id: str) -> Dict[str, Any]:
+        """Revoke parcel pickup delegation.
+
+        Args:
+            parcel_id: Parcel ID
+
+        Returns:
+            Revocation result
+        """
+        return await self._request("DELETE", f"/api/Parcels/{parcel_id}/delegate")
 
     # ==================== Amenities & Bookings ====================
 
@@ -508,7 +568,123 @@ class PulseClient:
         """
         return await self._request("DELETE", f"/api/Bookings/{booking_id}")
 
+    # ==================== Reference Data ====================
+
+    async def get_ticket_categories(self) -> List[Dict]:
+        """Get available ticket/incident categories."""
+        return await self._request("GET", "/api/TicketCategories")
+
+    async def get_amenity_categories(self) -> List[Dict]:
+        """Get available amenity categories."""
+        return await self._request("GET", "/api/AmenityCategories")
+
+    async def get_request_types(self) -> List[Dict]:
+        """Get available resident request types."""
+        return await self._request("GET", "/api/ResidentRequests/request-types")
+
+    # ==================== Surveys ====================
+
+    async def get_surveys(self) -> List[Dict]:
+        """Get available surveys."""
+        return await self._request("GET", "/api/Surveys")
+
+    async def submit_survey_answer(
+        self, survey_id: str, answers: list
+    ) -> Dict[str, Any]:
+        """Submit survey answers.
+
+        Args:
+            survey_id: Survey ID
+            answers: List of answers
+
+        Returns:
+            Submission result
+        """
+        return await self._request(
+            "POST",
+            "/api/Surveys/answers",
+            json_data={"surveyId": survey_id, "answers": answers},
+        )
+
+    # ==================== Visitor Registration ====================
+
+    async def register_visitor(
+        self,
+        visitor_name: str,
+        visitor_phone: str,
+        visit_date: str,
+        purpose: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Register a visitor.
+
+        Args:
+            visitor_name: Visitor's name
+            visitor_phone: Visitor's phone number
+            visit_date: Visit date (YYYY-MM-DD)
+            purpose: Visit purpose
+
+        Returns:
+            Registration result
+        """
+        payload = {
+            "visitorName": visitor_name,
+            "visitorPhone": visitor_phone,
+            "visitDate": visit_date,
+        }
+        if purpose:
+            payload["purpose"] = purpose
+        return await self._request(
+            "POST", "/api/visitorregistrations", json_data=payload
+        )
+
+    # ==================== Resident Requests ====================
+
+    async def get_resident_requests(
+        self, status: Optional[str] = None
+    ) -> List[Dict]:
+        """Get resident's requests.
+
+        Args:
+            status: Filter by status
+
+        Returns:
+            List of requests
+        """
+        params = {}
+        if status:
+            params["status"] = status
+        return await self._request("GET", "/api/ResidentRequests", params=params)
+
+    async def get_resident_request(self, request_id: str) -> Dict[str, Any]:
+        """Get resident request detail.
+
+        Args:
+            request_id: Request ID
+
+        Returns:
+            Request details
+        """
+        return await self._request("GET", f"/api/ResidentRequests/{request_id}")
+
     # ==================== Notifications ====================
+
+    async def get_payment_history(
+        self, bill_id: Optional[str] = None
+    ) -> List[Dict]:
+        """Get payment history for current user.
+
+        Args:
+            bill_id: Filter by bill ID
+
+        Returns:
+            List of payment records
+        """
+        params = {}
+        if bill_id:
+            params["billId"] = bill_id
+        return await self._request(
+            "GET", "/api/v1/resident/payments/history", params=params
+        )
 
     async def get_notifications(self, unread_only: bool = False) -> List[Dict]:
         """Get user notifications.
@@ -532,6 +708,14 @@ class PulseClient:
             Result
         """
         return await self._request("PUT", f"/api/Notifications/{notification_id}/read")
+
+    async def mark_all_notifications_read(self) -> Dict[str, Any]:
+        """Mark all notifications as read."""
+        return await self._request("PUT", "/api/v1/resident/notifications/read-all")
+
+    async def get_unread_notification_count(self) -> Dict[str, Any]:
+        """Get count of unread notifications."""
+        return await self._request("GET", "/api/Notifications/unread-count")
 
     # ==================== Announcements ====================
 

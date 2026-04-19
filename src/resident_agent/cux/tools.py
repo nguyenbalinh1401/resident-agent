@@ -29,37 +29,6 @@ def _wrap_result(result: Union[Dict, List, Any]) -> Dict[str, Any]:
         return {"data": result}
     return result
 
-# Mock data for packages (when Pulse Backend endpoint unavailable)
-MOCK_PACKAGES = [
-    {
-        "id": "pkg-001",
-        "unitId": "unit-101",
-        "recipientName": "Nguyễn Văn A",
-        "status": "Arrived",
-        "description": "Gói hàng từ Shopee",
-        "arrivalTime": "2026-03-28T10:30:00Z",
-        "loggedBy": "staff-001"
-    },
-    {
-        "id": "pkg-002",
-        "unitId": "unit-102",
-        "recipientName": "Trần Thị B",
-        "status": "Arrived",
-        "description": "Gói hàng từ Lazada",
-        "arrivalTime": "2026-03-29T14:15:00Z",
-        "loggedBy": "staff-001"
-    },
-    {
-        "id": "pkg-003",
-        "unitId": "unit-101",
-        "recipientName": "Nguyễn Văn A",
-        "status": "PickedUp",
-        "description": "Gói hàng từ Tiki",
-        "arrivalTime": "2026-03-25T09:00:00Z",
-        "loggedBy": "staff-002"
-    },
-]
-
 # Tool definitions following OpenAI's function calling format
 TOOLS = [
     # ==================== Profile Tools ====================
@@ -121,26 +90,6 @@ TOOLS = [
                     "bill_id": {"type": "string", "description": "ID của hóa đơn"},
                 },
                 "required": ["bill_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "make_payment",
-            "description": "Thanh toán hóa đơn",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "bill_id": {"type": "string", "description": "ID hóa đơn cần thanh toán"},
-                    "amount": {"type": "number", "description": "Số tiền thanh toán"},
-                    "payment_method": {
-                        "type": "string",
-                        "enum": ["VNPay", "Momo", "BankTransfer", "Cash"],
-                        "description": "Phương thức thanh toán",
-                    },
-                },
-                "required": ["bill_id", "amount"],
             },
         },
     },
@@ -299,6 +248,50 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_package_detail",
+            "description": "Xem chi tiết một bưu kiện (thông tin người nhận, trạng thái, lịch sử)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package_id": {"type": "string", "description": "ID của bưu kiện"},
+                },
+                "required": ["package_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_pickup",
+            "description": "Ủy quyền người khác nhận bưu kiện giúp",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package_id": {"type": "string", "description": "ID bưu kiện"},
+                    "delegate_name": {"type": "string", "description": "Tên người nhận ủy quyền"},
+                    "delegate_phone": {"type": "string", "description": "Số điện thoại người nhận ủy quyền"},
+                },
+                "required": ["package_id", "delegate_name", "delegate_phone"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "revoke_pickup_delegation",
+            "description": "Hủy ủy quyền nhận bưu kiện",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package_id": {"type": "string", "description": "ID bưu kiện"},
+                },
+                "required": ["package_id"],
+            },
+        },
+    },
     # ==================== Announcement Tools ====================
     {
         "type": "function",
@@ -314,6 +307,227 @@ TOOLS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    # ==================== Payment Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_payment_history",
+            "description": "Xem lịch sử thanh toán (các giao dịch đã thực hiện)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "bill_id": {"type": "string", "description": "Lọc theo ID hóa đơn (optional)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    # ==================== Notification Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_notifications",
+            "description": "Xem danh sách thông báo (báo mới, nhắc nhở, cảnh báo)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "is_read": {
+                        "type": "boolean",
+                        "description": "Lọc theo đã đọc (true) hoặc chưa đọc (false), bỏ qua để xem tất cả",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mark_notification_read",
+            "description": "Đánh dấu đã đọc một thông báo",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "notification_id": {"type": "string", "description": "ID của thông báo"},
+                },
+                "required": ["notification_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mark_all_notifications_read",
+            "description": "Đánh dấu đã đọc tất cả thông báo",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_unread_notification_count",
+            "description": "Xem số lượng thông báo chưa đọc",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    # ==================== Ticket Comment Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ticket_comments",
+            "description": "Xem bình luận/cập nhật trên phiếu báo sự cố",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {"type": "string", "description": "ID phiếu báo sự cố"},
+                },
+                "required": ["ticket_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_ticket_comment",
+            "description": "Thêm bình luận/cập nhật cho phiếu báo sự cố",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {"type": "string", "description": "ID phiếu báo sự cố"},
+                    "content": {"type": "string", "description": "Nội dung bình luận"},
+                },
+                "required": ["ticket_id", "content"],
+            },
+        },
+    },
+    # ==================== Reference Data Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ticket_categories",
+            "description": "Xem danh mục sự cố (điện, nước, thang máy, an ninh, etc.) - dùng khi báo sự cố",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_amenity_categories",
+            "description": "Xem danh mục tiện ích (thể thao, giải trí, sinh hoạt, etc.) - dùng khi tìm tiện ích",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_request_types",
+            "description": "Xem các loại yêu cầu có thể tạo (thẻ cư dân, xe, đổi chỗ đỗ, đăng ký khách)",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    # ==================== Survey Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_surveys",
+            "description": "Xem các khảo sát đang mở từ ban quản lý",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "submit_survey_answer",
+            "description": "Gửi câu trả lời khảo sát",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "survey_id": {"type": "string", "description": "ID khảo sát"},
+                    "answers": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "Danh sách câu trả lời",
+                    },
+                },
+                "required": ["survey_id", "answers"],
+            },
+        },
+    },
+    # ==================== Visitor Registration Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "register_visitor",
+            "description": "Đăng ký khách đến thăm",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "visitor_name": {"type": "string", "description": "Tên khách"},
+                    "visitor_phone": {"type": "string", "description": "Số điện thoại khách"},
+                    "visit_date": {"type": "string", "description": "Ngày đến (YYYY-MM-DD)"},
+                    "purpose": {"type": "string", "description": "Mục đích đến thăm (optional)"},
+                },
+                "required": ["visitor_name", "visitor_phone", "visit_date"],
+            },
+        },
+    },
+    # ==================== Resident Request Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_my_requests",
+            "description": "Xem danh sách yêu cầu của tôi (đăng ký thẻ cư dân, đăng ký xe, đăng ký khách, etc.)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["Pending", "Approved", "Rejected"],
+                        "description": "Lọc theo trạng thái",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_request_detail",
+            "description": "Xem chi tiết một yêu cầu (trạng thái, thông tin, lý do từ chối nếu có)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request_id": {"type": "string", "description": "ID của yêu cầu"},
+                },
+                "required": ["request_id"],
             },
         },
     },
@@ -355,9 +569,6 @@ async def execute_tool(
         elif tool_name == "get_bill_detail":
             result = await pulse_client.get_bill(params["bill_id"])
 
-        elif tool_name == "make_payment":
-            result = await pulse_client.create_payment(**params)
-
         # Amenity tools
         elif tool_name == "get_amenities":
             result = _wrap_result(await pulse_client.get_amenities(**params))
@@ -386,17 +597,98 @@ async def execute_tool(
 
         # Package tools
         elif tool_name == "get_packages":
-            # Use mock data since Pulse Backend Packages endpoint is not available
-            status_filter = params.get("status")
-            if status_filter:
-                filtered = [p for p in MOCK_PACKAGES if p["status"] == status_filter]
-                result = {"data": filtered, "total": len(filtered), "mock": True}
-            else:
-                result = {"data": MOCK_PACKAGES, "total": len(MOCK_PACKAGES), "mock": True}
+            result = _wrap_result(await pulse_client.get_packages(**params))
+
+        elif tool_name == "get_package_detail":
+            result = await pulse_client.get_package(params["package_id"])
+
+        elif tool_name == "delegate_pickup":
+            result = await pulse_client.delegate_pickup(
+                parcel_id=params["package_id"],
+                delegate_name=params["delegate_name"],
+                delegate_phone=params["delegate_phone"],
+            )
+
+        elif tool_name == "revoke_pickup_delegation":
+            result = await pulse_client.revoke_pickup_delegation(
+                parcel_id=params["package_id"]
+            )
 
         # Announcement tools
         elif tool_name == "get_announcements":
             result = _wrap_result(await pulse_client.get_announcements())
+
+        # Payment tools (read-only)
+        elif tool_name == "get_payment_history":
+            result = _wrap_result(
+                await pulse_client.get_payment_history(bill_id=params.get("bill_id"))
+            )
+
+        # Notification tools
+        elif tool_name == "get_notifications":
+            is_read = params.get("is_read")
+            result = _wrap_result(
+                await pulse_client.get_notifications(unread_only=(is_read is False))
+            )
+
+        elif tool_name == "mark_notification_read":
+            result = await pulse_client.mark_notification_read(
+                params["notification_id"]
+            )
+
+        elif tool_name == "mark_all_notifications_read":
+            result = await pulse_client.mark_all_notifications_read()
+
+        elif tool_name == "get_unread_notification_count":
+            result = await pulse_client.get_unread_notification_count()
+
+        # Ticket comment tools
+        elif tool_name == "get_ticket_comments":
+            result = _wrap_result(
+                await pulse_client.get_ticket_comments(params["ticket_id"])
+            )
+
+        elif tool_name == "add_ticket_comment":
+            result = await pulse_client.add_ticket_comment(
+                ticket_id=params["ticket_id"], content=params["content"]
+            )
+
+        # Reference data tools
+        elif tool_name == "get_ticket_categories":
+            result = _wrap_result(await pulse_client.get_ticket_categories())
+
+        elif tool_name == "get_amenity_categories":
+            result = _wrap_result(await pulse_client.get_amenity_categories())
+
+        elif tool_name == "get_request_types":
+            result = _wrap_result(await pulse_client.get_request_types())
+
+        # Survey tools
+        elif tool_name == "get_surveys":
+            result = _wrap_result(await pulse_client.get_surveys())
+
+        elif tool_name == "submit_survey_answer":
+            result = await pulse_client.submit_survey_answer(
+                survey_id=params["survey_id"], answers=params["answers"]
+            )
+
+        # Visitor registration tools
+        elif tool_name == "register_visitor":
+            result = await pulse_client.register_visitor(
+                visitor_name=params["visitor_name"],
+                visitor_phone=params["visitor_phone"],
+                visit_date=params["visit_date"],
+                purpose=params.get("purpose"),
+            )
+
+        # Resident request tools
+        elif tool_name == "get_my_requests":
+            result = _wrap_result(
+                await pulse_client.get_resident_requests(status=params.get("status"))
+            )
+
+        elif tool_name == "get_request_detail":
+            result = await pulse_client.get_resident_request(params["request_id"])
 
         else:
             raise ValueError(f"Unknown tool: {tool_name}")

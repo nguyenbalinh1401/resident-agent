@@ -142,7 +142,7 @@ class SSEEvent(BaseModel):
     type: SSEEventType
     session_id: str
     content: Optional[str] = Field(default=None, description="Content for token/content events")
-    actions: Optional[List[ActionButton]] = Field(default=None, description="Actions for action events")
+    actions: Optional[List[Dict[str, Any]]] = Field(default=None, description="Actions for action events")
     tool_call: Optional[ToolCall] = Field(default=None, description="Tool call for tool_call events")
     error: Optional[str] = Field(default=None, description="Error message for error events")
 
