@@ -137,11 +137,19 @@ class ActionGenerator:
             "view_bills": "get_bills",
             "view_bill_detail": "get_bill_detail",
             "check_package": "get_packages",
+            "view_package_detail": "get_package_detail",
+            "delegate_pickup": "delegate_pickup",
+            "revoke_delegation": "revoke_pickup_delegation",
             "view_bookings": "get_my_bookings",
             "view_incidents": "get_my_incidents",
             "report_incident": "create_incident",
             "book_amenity": "get_amenities",
             "view_amenities": "get_amenities",
+            "view_notifications": "get_notifications",
+            "view_payment_history": "get_payment_history",
+            "view_requests": "get_my_requests",
+            "view_surveys": "get_surveys",
+            "register_visitor": "register_visitor",
         }
         return action_to_tool.get(action)
 
@@ -303,11 +311,30 @@ Based on the conversation context, suggest 3 relevant next actions for the user.
 
 ## Available tools
 - get_bills: View utility bills
+- get_bill_detail: View bill details
+- get_payment_history: View payment history
 - get_packages: Check packages
+- get_package_detail: View package details
+- delegate_pickup: Delegate package pickup
 - get_amenities: View available facilities
+- get_amenity_detail: View facility details
+- get_amenity_categories: View facility categories
 - get_my_bookings: View user's bookings
+- book_amenity: Book a facility
+- cancel_booking: Cancel a booking
 - create_incident: Report an issue
+- get_my_incidents: View reported issues
+- get_incident_detail: View issue details
+- get_ticket_comments: View issue comments
+- get_ticket_categories: View issue categories
+- get_notifications: View notifications
+- get_unread_notification_count: View unread notification count
 - get_announcements: View building announcements
+- get_surveys: View surveys
+- get_my_requests: View resident requests
+- get_request_types: View request types
+- register_visitor: Register a visitor
+- get_profile: View profile
 
 Respond in JSON format:
 {{"actions": [
