@@ -666,6 +666,50 @@ class PulseClient:
         """
         return await self._request("GET", f"/api/ResidentRequests/{request_id}")
 
+    # ==================== Resident Registries (Admin/Waitlist) ====================
+
+    async def get_resident_registries(self, status: Optional[str] = None) -> List[Dict]:
+        """Get pre-approved resident registry list (Admin).
+
+        Args:
+            status: Filter by Status (Pending/Verified/Rejected)
+
+        Returns:
+            List of registry entries
+        """
+        params = {}
+        if status:
+            params["status"] = status
+        return await self._request("GET", "/api/ResidentRegistries", params=params)
+
+    async def create_resident_registry(
+        self, phone_number: str, unit_id: str, full_name: Optional[str] = None
+    ) -> str:
+        """Create a pre-approved resident registry entry (Admin).
+
+        Args:
+            phone_number: Resident's phone number
+            unit_id: Unit ID to pre-approve
+            full_name: Optional full name
+
+        Returns:
+            ID of the created record
+        """
+        payload = {
+            "phoneNumber": phone_number,
+            "unitId": unit_id
+        }
+        if full_name:
+            payload["fullName"] = full_name
+
+        return await self._request("POST", "/api/ResidentRegistries", json_data=payload)
+
+    # ==================== Units ====================
+
+    async def get_units(self) -> List[Dict]:
+        """Get list of building units."""
+        return await self._request("GET", "/api/Units")
+
     # ==================== Notifications ====================
 
     async def get_payment_history(

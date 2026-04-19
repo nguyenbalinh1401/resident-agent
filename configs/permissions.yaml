@@ -39,6 +39,13 @@ permission_to_tools:
   # Visitors
   "Visitors.Write": ["register_visitor"]
 
+  # Admin: Resident Registries (Waitlist)
+  "ResidentRegistries.Read": ["get_resident_registries"]
+  "ResidentRegistries.Write": ["create_resident_registry"]
+
+  # Units
+  "Units.Read": ["get_units"]
+
 # Tools that everyone can access (even without specific permissions)
 default_tools:
   - "get_profile"
@@ -98,6 +105,13 @@ tool_to_permission:
   # Resident Requests
   get_my_requests: "Requests.Read"
   get_request_detail: "Requests.Read"
+
+  # Resident Registries (Admin)
+  get_resident_registries: "ResidentRegistries.Read"
+  create_resident_registry: "ResidentRegistries.Write"
+
+  # Units
+  get_units: "Units.Read"
 
   # User
   get_profile: null  # No permission required
