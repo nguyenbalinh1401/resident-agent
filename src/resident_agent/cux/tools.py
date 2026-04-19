@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, Union, List
 import structlog
 
 from resident_agent.clients.pulse_client import PulseClient
+from resident_agent.auth.permission_mapper import PermissionMapper
 
 logger = structlog.get_logger()
 
@@ -531,6 +532,54 @@ TOOLS = [
             },
         },
     },
+    # ==================== Resident Registries (Admin) ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_resident_registries",
+            "description": "Xem danh sách cư dân trong danh sách chờ/đã phê duyệt (Admin)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["Pending", "Verified", "Rejected"],
+                        "description": "Lọc theo trạng thái",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_resident_registry",
+            "description": "Thêm cư dân vào danh sách phê duyệt chờ nhập học (Admin)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone_number": {"type": "string", "description": "Số điện thoại cư dân"},
+                    "unit_id": {"type": "string", "description": "ID căn hộ"},
+                    "full_name": {"type": "string", "description": "Họ tên (tùy chọn)"},
+                },
+                "required": ["phone_number", "unit_id"],
+            },
+        },
+    },
+    # ==================== Units ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_units",
+            "description": "Xem danh sách các căn hộ/phòng trong tòa nhà (Admin)",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -538,6 +587,7 @@ async def execute_tool(
     tool_name: str,
     params: dict,
     pulse_client: PulseClient,
+    user_permissions: Optional[List[Dict[str, str]]] = None,
 ) -> dict:
     """Execute a tool by calling the Pulse Backend API.
 
@@ -545,14 +595,26 @@ async def execute_tool(
         tool_name: Name of the tool to execute
         params: Tool parameters
         pulse_client: Authenticated PulseClient instance (injected via dependency)
+        user_permissions: List of user permissions for RBAC verification
 
     Returns:
         Tool execution result
 
     Raises:
+        PermissionError: If user doesn't have permission to execute the tool
         Exception: If tool execution fails
     """
     logger.info("executing_tool", tool=tool_name, params=params)
+
+    # RBAC Verification
+    permission_mapper = PermissionMapper()
+    if not permission_mapper.check_tool_permission(tool_name, user_permissions or []):
+        logger.warning(
+            "tool_execution_denied",
+            tool=tool_name,
+            user_permissions=user_permissions,
+        )
+        raise PermissionError(f"You do not have permission to use tool: {tool_name}")
 
     try:
         # Profile tools
@@ -689,6 +751,17 @@ async def execute_tool(
 
         elif tool_name == "get_request_detail":
             result = await pulse_client.get_resident_request(params["request_id"])
+
+        # Resident registry tools (Admin)
+        elif tool_name == "get_resident_registries":
+            result = _wrap_result(await pulse_client.get_resident_registries(**params))
+
+        elif tool_name == "create_resident_registry":
+            result = await pulse_client.create_resident_registry(**params)
+
+        # Unit tools (Admin)
+        elif tool_name == "get_units":
+            result = _wrap_result(await pulse_client.get_units())
 
         else:
             raise ValueError(f"Unknown tool: {tool_name}")

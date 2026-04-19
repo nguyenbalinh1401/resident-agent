@@ -291,6 +291,7 @@ class CuxOrchestrator:
                             tool_name,
                             params,
                             pulse_client,
+                            user_permissions=permissions,
                         )
                         tool_results.append(
                             {
@@ -567,6 +568,7 @@ class CuxOrchestrator:
                             tool_name,
                             params,
                             pulse_client,
+                            user_permissions=permissions,
                         )
                         tool_results.append(
                             {
@@ -695,6 +697,7 @@ class CuxOrchestrator:
                 tool_name,
                 params,
                 pulse_client,
+                user_permissions=permissions,
             )
 
             # Use ActionGenerator to format response as markdown
