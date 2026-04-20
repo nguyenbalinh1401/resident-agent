@@ -305,6 +305,32 @@ class PulseClient:
         """
         return await self._request("GET", f"/api/Bills/{bill_id}")
 
+    async def create_bill(
+        self, unit_id: str, billing_month: str, due_date: str, details: List[Dict]
+    ) -> Dict[str, Any]:
+        """Create a monthly bill for a unit (Admin/Staff).
+
+        Args:
+            unit_id: ID of the unit
+            billing_month: Month of the bill (YYYY-MM-01)
+            due_date: Due date (YYYY-MM-DD)
+            details: List of fee details (FeeTypeId, Subtotal, etc.)
+
+        Returns:
+            ID of the created bill
+        """
+        payload = {
+            "unitId": unit_id,
+            "billingMonth": billing_month,
+            "dueDate": due_date,
+            "details": details
+        }
+        return await self._request("POST", "/api/Bills", json_data=payload)
+
+    async def get_fee_types(self) -> List[Dict]:
+        """Get list of fee types (Management, Electricity, Water, etc.)."""
+        return await self._request("GET", "/api/FeeTypes")
+
     # ==================== Payments ====================
 
     async def create_payment(
@@ -703,6 +729,44 @@ class PulseClient:
             payload["fullName"] = full_name
 
         return await self._request("POST", "/api/ResidentRegistries", json_data=payload)
+
+    async def update_resident_registry_status(
+        self, registry_id: str, status: str
+    ) -> Dict[str, Any]:
+        """Update resident registry status (Admin: Verified/Rejected).
+
+        Args:
+            registry_id: ID of the registry record
+            status: New status (Verified, Rejected)
+
+        Returns:
+            Update result
+        """
+        return await self._request(
+            "PUT",
+            f"/api/ResidentRegistries/{registry_id}/status",
+            json_data={"status": status},
+        )
+
+    async def request_resident_verification(
+        self, unit_id: str, full_name: str, phone_number: str
+    ) -> Dict[str, Any]:
+        """Request resident verification for an account (User).
+
+        Args:
+            unit_id: Target unit ID
+            full_name: User's full name
+            phone_number: User's phone number
+
+        Returns:
+            Created request details
+        """
+        payload = {
+            "unitId": unit_id,
+            "fullName": full_name,
+            "phoneNumber": phone_number,
+        }
+        return await self._request("POST", "/api/Users/request-resident", json_data=payload)
 
     # ==================== Units ====================
 

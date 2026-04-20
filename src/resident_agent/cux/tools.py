@@ -94,6 +94,50 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_bill",
+            "description": "Tạo hóa đơn tháng mới cho căn hộ (Admin/Staff)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "unit_id": {"type": "string", "description": "ID của căn hộ"},
+                    "billing_month": {"type": "string", "description": "Tháng của hóa đơn (YYYY-MM-01)"},
+                    "due_date": {"type": "string", "description": "Hạn thanh toán (YYYY-MM-DD)"},
+                    "details": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "feeTypeId": {"type": "string", "description": "ID loại phí"},
+                                "subtotal": {"type": "number", "description": "Thành tiền"},
+                                "quantity": {"type": "number", "description": "Số lượng (optional)"},
+                                "unitPrice": {"type": "number", "description": "Đơn giá (optional)"},
+                                "oldIndex": {"type": "number", "description": "Chỉ số cũ (optional - cho điện/nước)"},
+                                "newIndex": {"type": "number", "description": "Chỉ số mới (optional - cho điện/nước)"},
+                            },
+                            "required": ["feeTypeId", "subtotal"],
+                        },
+                        "description": "Danh sách các khoản phí",
+                    },
+                },
+                "required": ["unit_id", "billing_month", "due_date", "details"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fee_types",
+            "description": "Xem danh sách các loại phí (Phí quản lý, điện, nước, gửi xe, etc.) - dùng khi tạo hóa đơn",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
     # ==================== Booking Tools ====================
     {
         "type": "function",
@@ -554,16 +598,35 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "create_resident_registry",
-            "description": "Thêm cư dân vào danh sách phê duyệt chờ nhập học (Admin)",
+            "name": "request_resident_verification",
+            "description": "Gửi yêu cầu xác thực cư dân cho căn hộ (Resident)",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "phone_number": {"type": "string", "description": "Số điện thoại cư dân"},
                     "unit_id": {"type": "string", "description": "ID căn hộ"},
-                    "full_name": {"type": "string", "description": "Họ tên (tùy chọn)"},
+                    "full_name": {"type": "string", "description": "Họ tên cư dân"},
+                    "phone_number": {"type": "string", "description": "Số điện thoại"},
                 },
-                "required": ["phone_number", "unit_id"],
+                "required": ["unit_id", "full_name", "phone_number"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "approve_resident_verification",
+            "description": "Phê duyệt yêu cầu xác thực cư dân (Admin)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "registry_id": {"type": "string", "description": "ID của yêu cầu xác thực"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["Verified", "Rejected"],
+                        "description": "Trạng thái mới (Verified: Duyệt, Rejected: Từ chối)",
+                    },
+                },
+                "required": ["registry_id", "status"],
             },
         },
     },
@@ -630,6 +693,12 @@ async def execute_tool(
 
         elif tool_name == "get_bill_detail":
             result = await pulse_client.get_bill(params["bill_id"])
+
+        elif tool_name == "create_bill":
+            result = await pulse_client.create_bill(**params)
+
+        elif tool_name == "get_fee_types":
+            result = _wrap_result(await pulse_client.get_fee_types())
 
         # Amenity tools
         elif tool_name == "get_amenities":
@@ -756,8 +825,13 @@ async def execute_tool(
         elif tool_name == "get_resident_registries":
             result = _wrap_result(await pulse_client.get_resident_registries(**params))
 
-        elif tool_name == "create_resident_registry":
-            result = await pulse_client.create_resident_registry(**params)
+        elif tool_name == "approve_resident_verification":
+            result = await pulse_client.update_resident_registry_status(
+                registry_id=params["registry_id"], status=params["status"]
+            )
+
+        elif tool_name == "request_resident_verification":
+            result = await pulse_client.request_resident_verification(**params)
 
         # Unit tools (Admin)
         elif tool_name == "get_units":

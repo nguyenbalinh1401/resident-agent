@@ -5,7 +5,7 @@
 permission_to_tools:
   # Profile
   "Users.Read": ["get_profile"]
-  "Users.Write": ["update_contact"]
+  "Users.Write": ["update_contact", "request_resident_verification"]
 
   # Bookings/Amenities
   "Bookings.Read": ["get_amenities", "get_amenity_detail", "get_my_bookings"]
@@ -16,7 +16,8 @@ permission_to_tools:
   "Tickets.Write": ["create_incident", "add_ticket_comment"]
 
   # Bills
-  "Bills.Read": ["get_bills", "get_bill_detail"]
+  "Bills.Read": ["get_bills", "get_bill_detail", "get_fee_types"]
+  "Bills.Write": ["create_bill"]
 
   # Payments (read-only)
   "Payments.Read": ["get_payment_history"]
@@ -41,7 +42,7 @@ permission_to_tools:
 
   # Admin: Resident Registries (Waitlist)
   "ResidentRegistries.Read": ["get_resident_registries"]
-  "ResidentRegistries.Write": ["create_resident_registry"]
+  "ResidentRegistries.Write": ["approve_resident_verification"]
 
   # Units
   "Units.Read": ["get_units"]
@@ -59,6 +60,8 @@ tool_to_permission:
   # Bills
   get_bills: "Bills.Read"
   get_bill_detail: "Bills.Read"
+  create_bill: "Bills.Write"
+  get_fee_types: "Bills.Read"
 
   # Payments
   get_payment_history: "Payments.Read"
@@ -108,7 +111,7 @@ tool_to_permission:
 
   # Resident Registries (Admin)
   get_resident_registries: "ResidentRegistries.Read"
-  create_resident_registry: "ResidentRegistries.Write"
+  approve_resident_verification: "ResidentRegistries.Write"
 
   # Units
   get_units: "Units.Read"
@@ -116,3 +119,4 @@ tool_to_permission:
   # User
   get_profile: null  # No permission required
   update_contact: "Users.Write"
+  request_resident_verification: "Users.Write"
