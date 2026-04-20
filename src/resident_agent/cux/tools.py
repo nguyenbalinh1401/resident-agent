@@ -643,6 +643,40 @@ TOOLS = [
             },
         },
     },
+    # ==================== Vehicle Tools ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_my_vehicles",
+            "description": "Xem danh sách xe đã đăng ký của tôi (biển số, loại xe, trạng thái)",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "register_vehicle",
+            "description": "Đăng ký phương tiện mới (ô tô, xe máy, etc.)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plate_number": {"type": "string", "description": "Biển số xe"},
+                    "brand": {"type": "string", "description": "Hãng xe/Hiệu xe"},
+                    "color": {"type": "string", "description": "Màu xe"},
+                    "vehicle_type": {
+                        "type": "string", 
+                        "enum": ["Car", "Motorcycle", "Bicycle", "Electric motorcycle"],
+                        "description": "Loại phương tiện"
+                    },
+                },
+                "required": ["plate_number", "brand", "color", "vehicle_type"],
+            },
+        },
+    },
 ]
 
 
@@ -836,6 +870,13 @@ async def execute_tool(
         # Unit tools (Admin)
         elif tool_name == "get_units":
             result = _wrap_result(await pulse_client.get_units())
+
+        # Vehicle tools
+        elif tool_name == "get_my_vehicles":
+            result = _wrap_result(await pulse_client.get_my_vehicles())
+
+        elif tool_name == "register_vehicle":
+            result = await pulse_client.register_vehicle(**params)
 
         else:
             raise ValueError(f"Unknown tool: {tool_name}")

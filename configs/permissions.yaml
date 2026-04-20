@@ -40,6 +40,9 @@ permission_to_tools:
   # Visitors
   "Visitors.Write": ["register_visitor"]
 
+  # Vehicles
+  "Vehicles.Read": ["get_my_vehicles"]
+
   # Admin: Resident Registries (Waitlist)
   "ResidentRegistries.Read": ["get_resident_registries"]
   "ResidentRegistries.Write": ["approve_resident_verification"]
@@ -108,6 +111,7 @@ tool_to_permission:
   # Resident Requests
   get_my_requests: "Requests.Read"
   get_request_detail: "Requests.Read"
+  register_vehicle: "Requests.Write"
 
   # Resident Registries (Admin)
   get_resident_registries: "ResidentRegistries.Read"
@@ -120,3 +124,6 @@ tool_to_permission:
   get_profile: null  # No permission required
   update_contact: "Users.Write"
   request_resident_verification: "Users.Write"
+
+  # Vehicles
+  get_my_vehicles: "Vehicles.Read"

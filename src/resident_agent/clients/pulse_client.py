@@ -6,6 +6,7 @@ Handles authentication, billing, bookings, tickets, packages, etc.
 
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+import json
 import httpx
 import structlog
 
@@ -632,36 +633,43 @@ class PulseClient:
             json_data={"surveyId": survey_id, "answers": answers},
         )
 
-    # ==================== Visitor Registration ====================
+    # ==================== Vehicles ====================
+    async def get_my_vehicles(self) -> List[Dict]:
+        """Get vehicles registered to the current user."""
+        return await self._request("GET", "/api/Vehicles/my")
 
-    async def register_visitor(
-        self,
-        visitor_name: str,
-        visitor_phone: str,
-        visit_date: str,
-        purpose: Optional[str] = None,
+    async def register_vehicle(
+        self, plate_number: str, brand: str, color: str, vehicle_type: str
     ) -> Dict[str, Any]:
-        """Register a visitor.
+        """Create a vehicle registration request.
 
         Args:
-            visitor_name: Visitor's name
-            visitor_phone: Visitor's phone number
-            visit_date: Visit date (YYYY-MM-DD)
-            purpose: Visit purpose
+            plate_number: License plate
+            brand: Vehicle brand
+            color: Vehicle color
+            vehicle_type: Type (Car, Motorbike, etc.)
 
         Returns:
-            Registration result
+            Created request details
         """
+        # We need the request_type_id for 'Vehicle Card' or 'VehicleCard'
+        # For simplicity in the agent, we first fetch types to find the ID
+        types = await self.get_request_types()
+        v_type = next((t for t in types if t["name"] in ["VehicleCard", "Vehicle Card"]), None)
+        
+        if not v_type:
+            raise ValueError("Vehicle registration type not found on server")
+
         payload = {
-            "visitorName": visitor_name,
-            "visitorPhone": visitor_phone,
-            "visitDate": visit_date,
+            "requestTypeId": v_type["id"],
+            "requestDataJson": json.dumps({
+                "plateNumber": plate_number,
+                "brand": brand,
+                "color": color,
+                "vehicleType": vehicle_type
+            })
         }
-        if purpose:
-            payload["purpose"] = purpose
-        return await self._request(
-            "POST", "/api/visitorregistrations", json_data=payload
-        )
+        return await self._request("POST", "/api/ResidentRequests", json_data=payload)
 
     # ==================== Resident Requests ====================
 
