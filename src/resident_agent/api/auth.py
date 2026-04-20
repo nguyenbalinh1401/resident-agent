@@ -66,6 +66,13 @@ async def login(request: LoginRequest) -> TokenResponse:
                 logger.warning("permissions_fetch_failed", error=str(e))
                 # Continue without permissions - user will have basic access only
 
+            # If user is Admin, ensure they have wildcard permission for all tools
+            if login_response.role == "Admin":
+                logger.info("admin_role_detected_injecting_wildcard_permission")
+                # Check if wildcard already exists, if not add it
+                if not any(p.get("resource") == "*" for p in permissions):
+                    permissions.append({"resource": "*", "action": "*"})
+
             # Create Resident Agent JWT with user info
             jwt_handler = JWTHandler(settings)
 
