@@ -1,7 +1,7 @@
 """Pytest configuration and fixtures for Resident Agent tests.
 
 Fixtures and test configuration per specs:
-- specs/authentication.md - JWT token system (phoneNumber login, no refresh in specs)
+- specs/authentication.md - JWT token system (email login, no refresh in specs)
 - specs/api-reference.md - API endpoints (/auth/login, /chat, /chat/stream, /action)
 - specs/cux.md - CUX orchestrator (3 intent types)
 """
@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 # Test environment setup
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only")
 os.environ.setdefault("OPENAI_API_KEY", "test-openai-api-key")
-os.environ.setdefault("DEMO_PHONE_NUMBER", "0901234567")
+os.environ.setdefault("DEMO_email", "test@example.com")
 os.environ.setdefault("DEMO_PASSWORD", "demo123")
 
 
@@ -29,7 +29,7 @@ os.environ.setdefault("DEMO_PASSWORD", "demo123")
 def test_settings():
     """Create test settings per specs/authentication.md.
 
-    Note: Login uses phoneNumber, NOT email.
+    Note: Login uses email, NOT email.
     """
     from dataclasses import dataclass
 

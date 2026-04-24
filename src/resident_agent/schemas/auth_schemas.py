@@ -7,12 +7,10 @@ from pydantic import BaseModel, Field
 class LoginRequest(BaseModel):
     """Request model for login endpoint."""
 
-    phone_number: str = Field(
+    email: str = Field(
         ...,
-        min_length=10,
-        max_length=15,
-        description="User's phone number",
-        examples=["0901234567"],
+        description="User's email",
+        examples=["user@example.com"],
     )
     password: str = Field(
         ...,

@@ -1,7 +1,7 @@
 """Integration tests for API endpoints.
 
 Tests cover all endpoints per specs/api-reference.md:
-- POST /auth/login - Login with phoneNumber, get JWT token
+- POST /auth/login - Login with email, get JWT token
 - POST /chat - Send message, get response with actions
 - POST /action - Execute suggested action
 - GET /chat/stream - SSE streaming chat
@@ -43,12 +43,12 @@ class TestAuthLogin:
     """Tests for POST /auth/login per specs/authentication.md.
 
     Per specs:
-    - Login field: phone_number (NOT email)
+    - Login field: email (NOT email)
     - Returns: access_token, token_type, expires_in
     """
 
-    def test_login_with_phone_number_success(self, test_client: TestClient):
-        """Test login with phone_number per specs/authentication.md."""
+    def test_login_with_email_success(self, test_client: TestClient):
+        """Test login with email per specs/authentication.md."""
         with patch("resident_agent.api.auth.PulseClient") as MockPulseClient:
             mock_client = AsyncMock()
             mock_client.login = AsyncMock(return_value=LoginResponse(
@@ -65,7 +65,7 @@ class TestAuthLogin:
             response = test_client.post(
                 "/api/v1/auth/login",
                 json={
-                    "phone_number": "0901234567",
+                    "email": "test@example.com",
                     "password": "demo123",
                 },
             )
@@ -91,15 +91,15 @@ class TestAuthLogin:
             response = test_client.post(
                 "/api/v1/auth/login",
                 json={
-                    "phone_number": "0901234567",
+                    "email": "test@example.com",
                     "password": "wrongpassword",
                 },
             )
 
             assert response.status_code == 401
 
-    def test_login_missing_phone_number(self, test_client: TestClient):
-        """Test login without phone_number returns 422."""
+    def test_login_missing_email(self, test_client: TestClient):
+        """Test login without email returns 422."""
         response = test_client.post(
             "/api/v1/auth/login",
             json={"password": "demo123"},
@@ -111,7 +111,7 @@ class TestAuthLogin:
         """Test login without password returns 422."""
         response = test_client.post(
             "/api/v1/auth/login",
-            json={"phone_number": "0901234567"},
+            json={"email": "test@example.com"},
         )
 
         assert response.status_code == 422

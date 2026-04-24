@@ -2,7 +2,7 @@
 
 Tests cover JWT authentication per specs/authentication.md:
 - Two-Token System (Resident Agent JWT + Pulse Backend JWT)
-- Login with phoneNumber (NOT email)
+- Login with email (NOT email)
 - Token Passthrough via X-Pulse-Token header
 """
 
@@ -107,22 +107,22 @@ class TestJWTHandler:
             pass  # Expected
 
 
-class TestLoginWithPhoneNumber:
-    """Tests for login with phoneNumber per specs/authentication.md.
+class TestLoginWithemail:
+    """Tests for login with email per specs/authentication.md.
 
     Per specs:
-    - Login field: phoneNumber (NOT email)
-    - Demo credentials: phoneNumber + password
+    - Login field: email (NOT email)
+    - Demo credentials: email + password
     """
 
-    def test_login_request_uses_phone_number(self):
-        """Verify LoginRequest schema uses phone_number per specs/authentication.md."""
+    def test_login_request_uses_email(self):
+        """Verify LoginRequest schema uses email per specs/authentication.md."""
         from resident_agent.schemas.auth_schemas import LoginRequest
 
-        # Per specs, login uses phone_number
-        request = LoginRequest(phone_number="0901234567", password="demo123")
+        # Per specs, login uses email
+        request = LoginRequest(email="test@example.com", password="demo123")
 
-        assert request.phone_number == "0901234567"
+        assert request.email == "test@example.com"
         assert request.password == "demo123"
 
     def test_login_response_schema(self):

@@ -171,11 +171,11 @@ class PulseClient:
 
     # ==================== Authentication ====================
 
-    async def login(self, phone_number: str, password: str) -> LoginResponse:
+    async def login(self, email: str, password: str) -> LoginResponse:
         """Login user and get JWT token.
 
         Args:
-            phone_number: User's phone number
+            email: User's email
             password: User's password
 
         Returns:
@@ -183,17 +183,17 @@ class PulseClient:
 
         Example:
             async with PulseClient() as client:
-                response = await client.login("0901234567", "password123")
+                response = await client.login("user@example.com", "password123")
                 print(f"Logged in as {response.full_name}")
                 print(f"Token: {response.token}")
         """
-        logger.info("Logging in user", phone_number=phone_number)
+        logger.info("Logging in user", email=email)
 
         data = await self._request(
             method="POST",
             endpoint="/api/Users/login",
             json_data={
-                "phoneNumber": phone_number,
+                "email": email,
                 "password": password
             }
         )
@@ -905,11 +905,11 @@ class PulseClient:
 
 
 # Convenience function for quick usage
-async def create_authenticated_client(phone_number: str, password: str, base_url: str = "http://localhost:5000") -> PulseClient:
+async def create_authenticated_client(email: str, password: str, base_url: str = "http://localhost:5000") -> PulseClient:
     """Create and authenticate a Pulse client.
 
     Args:
-        phone_number: User's phone number
+        email: User's email
         password: User's password
         base_url: Pulse API base URL
 
@@ -917,12 +917,12 @@ async def create_authenticated_client(phone_number: str, password: str, base_url
         Authenticated PulseClient instance
 
     Example:
-        async with await create_authenticated_client("0901234567", "password") as client:
+        async with await create_authenticated_client("user@example.com", "password") as client:
             bills = await client.get_bills()
             print(bills)
     """
     config = PulseConfig(base_url=base_url)
     client = PulseClient(config)
     await client.__aenter__()
-    await client.login(phone_number, password)
+    await client.login(email, password)
     return client

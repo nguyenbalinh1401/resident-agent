@@ -9,6 +9,7 @@ from resident_agent.schemas.chat_schemas import ChatRequest, ChatResponse
 from resident_agent.auth.dependencies import get_current_user, get_pulse_client
 from resident_agent.cux.orchestrator import CuxOrchestrator
 from resident_agent.core.config import Settings
+from resident_agent.core.ops_store import OpsStore
 from resident_agent.clients.pulse_client import PulseClient
 
 logger = structlog.get_logger()
@@ -69,6 +70,13 @@ async def chat(
         tool_call_count=len(response.tool_calls),
     )
 
+    OpsStore.create().upsert_session(
+        user=user,
+        session_id=session_id,
+        user_message=request.message,
+        assistant_message=response.message,
+    )
+
     return response
 
 
@@ -118,6 +126,13 @@ async def execute_action(
         pulse_client=pulse_client,
         intent_type="tool_call",
         attachments=request.attachments,
+    )
+
+    OpsStore.create().upsert_session(
+        user=user,
+        session_id=session_id,
+        user_message=request.message or f"Execute action: {action}",
+        assistant_message=response.message,
     )
 
     return response

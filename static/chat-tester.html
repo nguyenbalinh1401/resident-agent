@@ -619,8 +619,8 @@
             <h2>Welcome to Pulse Chat</h2>
             <p>Please login to continue</p>
             <div class="form-group">
-                <label>Phone Number</label>
-                <input type="text" id="login-phone" value="0901234567" placeholder="Enter phone number">
+                <label>email</label>
+                <input type="text" id="login-email" value="test@example.com" placeholder="Enter email">
             </div>
             <div class="form-group">
                 <label>Password</label>
@@ -689,12 +689,12 @@
                 }
             }
 
-            async login(phone_number, password) {
+            async login(email, password) {
                 try {
                     const response = await fetch(`${CONFIG.apiBase}/auth/login`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ phone_number, password })
+                        body: JSON.stringify({ email, password })
                     });
 
                     if (!response.ok) {
@@ -704,7 +704,7 @@
 
                     const data = await response.json();
                     this.accessToken = data.access_token;
-                    this.userPhone = phone_number;
+                    this.userPhone = email;
                     this.tokenExpiry = Date.now() + (data.expires_in * 1000);
                     this.saveToStorage();
                     this.scheduleAutoRefresh();
@@ -1044,7 +1044,7 @@
 
         // Login
         loginBtn.addEventListener('click', async () => {
-            const phone = document.getElementById('login-phone').value;
+            const phone = document.getElementById('login-email').value;
             const password = document.getElementById('login-password').value;
 
             loginBtn.disabled = true;

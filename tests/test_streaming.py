@@ -21,16 +21,16 @@ DIM = "\033[2m"
 RESET = "\033[0m"
 
 
-def login(base_url: str, phone: str, password: str) -> str:
+def login(base_url: str, email: str, password: str) -> str:
     resp = requests.post(
         f"{base_url}/api/v1/auth/login",
-        json={"phone_number": phone, "password": password},
+        json={"email": email, "password": password},
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
     token = data.get("access_token") or data.get("token")
-    print(f"{GREEN}Logged in as {phone}{RESET}\n")
+    print(f"{GREEN}Logged in as {email}{RESET}\n")
     return token
 
 
@@ -173,7 +173,7 @@ def interactive_chat(base_url: str, token: str):
 def main():
     parser = argparse.ArgumentParser(description="Test Resident Agent SSE streaming")
     parser.add_argument("--url", default=BASE_URL, help=f"API base URL (default: {BASE_URL})")
-    parser.add_argument("--phone", help="Phone number for login")
+    parser.add_argument("--email", help="email number for login")
     parser.add_argument("--password", help="Password for login")
     parser.add_argument("--token", help="JWT token (skip login)")
     parser.add_argument("--message", "-m", help="Single message to send")
@@ -183,8 +183,8 @@ def main():
 
     # Get token
     token = args.token
-    if not token and args.phone and args.password:
-        token = login(args.url, args.phone, args.password)
+    if not token and args.email and args.password:
+        token = login(args.url, args.email, args.password)
     elif not token:
         print(f"{YELLOW}Warning: No auth token. Unauthenticated request.{RESET}\n")
 

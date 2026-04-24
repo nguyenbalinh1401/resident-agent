@@ -30,7 +30,7 @@ async def login(request: LoginRequest) -> TokenResponse:
     2. Issues a Resident Agent JWT token
 
     Args:
-        request: Login request with phone_number and password
+        request: Login request with email and password
 
     Returns:
         TokenResponse with access_token
@@ -39,7 +39,7 @@ async def login(request: LoginRequest) -> TokenResponse:
         HTTPException: If authentication fails
     """
     settings = Settings.get()
-    logger.info("login_attempt", phone_number=request.phone_number)
+    logger.info("login_attempt", email=request.email)
 
     # Validate against Pulse Backend
     pulse_config = PulseConfig(base_url=settings.pulse_backend_url)
@@ -47,7 +47,7 @@ async def login(request: LoginRequest) -> TokenResponse:
     try:
         async with PulseClient(pulse_config) as client:
             login_response = await client.login(
-                phone_number=request.phone_number,
+                email=request.email,
                 password=request.password,
             )
 
@@ -79,7 +79,6 @@ async def login(request: LoginRequest) -> TokenResponse:
             # Include user info in token payload
             token_data = {
                 "sub": login_response.user_id,
-                "phone_number": request.phone_number,
                 "name": login_response.full_name,
                 "email": login_response.email,
                 "role": login_response.role,
@@ -98,14 +97,14 @@ async def login(request: LoginRequest) -> TokenResponse:
     except PulseAPIError as e:
         logger.warning(
             "pulse_login_failed",
-            phone_number=request.phone_number,
+            email=request.email,
             status_code=e.status_code,
             error=str(e),
         )
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid phone number or password",
+            detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -141,7 +140,6 @@ async def refresh_token(
     # Create new token with same user data
     token_data = {
         "sub": user.get("sub"),
-        "phone_number": user.get("phone_number"),
         "name": user.get("name"),
         "email": user.get("email"),
         "role": user.get("role"),
@@ -175,7 +173,6 @@ async def get_me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, 
     # Remove sensitive data
     return {
         "user_id": user.get("sub"),
-        "phone_number": user.get("phone_number"),
         "name": user.get("name"),
         "email": user.get("email"),
         "role": user.get("role"),
