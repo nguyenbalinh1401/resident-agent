@@ -168,8 +168,17 @@ async def get_pulse_client(
     Raises:
         HTTPException: If Pulse token is missing
     """
-    # Get token from header or JWT payload
-    token = pulse_token or user.get("pulse_token")
+    # Prefer the fresh Pulse token passed by the client. The embedded token in
+    # the Resident Agent JWT is kept only as a backward-compatible fallback.
+    token = pulse_token
+
+    if not token:
+        token = user.get("pulse_token")
+        if token:
+            logger.warning(
+                "pulse_token_fallback_from_ra_jwt",
+                user_id=user.get("sub"),
+            )
 
     if not token:
         logger.warning("pulse_token_missing", user_id=user.get("sub"))

@@ -1,13 +1,13 @@
 """Authentication API endpoints."""
 
 from datetime import timedelta
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Depends
 import structlog
 
 from resident_agent.schemas.auth_schemas import LoginRequest, TokenResponse
 from resident_agent.auth.jwt_handler import JWTHandler
-from resident_agent.auth.dependencies import get_current_user
+from resident_agent.auth.dependencies import get_current_user, get_pulse_token
 from resident_agent.core.config import Settings
 from resident_agent.clients.pulse_client import PulseClient, PulseConfig, PulseAPIError
 
@@ -125,6 +125,7 @@ async def login(request: LoginRequest) -> TokenResponse:
 )
 async def refresh_token(
     user: Dict[str, Any] = Depends(get_current_user),
+    pulse_token: Optional[str] = Depends(get_pulse_token),
 ) -> TokenResponse:
     """Refresh access token.
 
@@ -137,13 +138,20 @@ async def refresh_token(
     settings = Settings.get()
     jwt_handler = JWTHandler(settings)
 
+    resolved_pulse_token = pulse_token or user.get("pulse_token")
+
+    if pulse_token:
+        logger.info("refresh_using_header_pulse_token", user_id=user.get("sub"))
+    elif resolved_pulse_token:
+        logger.warning("refresh_fallback_embedded_pulse_token", user_id=user.get("sub"))
+
     # Create new token with same user data
     token_data = {
         "sub": user.get("sub"),
         "name": user.get("name"),
         "email": user.get("email"),
         "role": user.get("role"),
-        "pulse_token": user.get("pulse_token"),
+        "pulse_token": resolved_pulse_token,
         "permissions": user.get("permissions", []),
     }
 
