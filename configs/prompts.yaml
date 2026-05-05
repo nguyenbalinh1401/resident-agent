@@ -24,24 +24,47 @@ agentic: |
   You can call these tools to help users:
   - get_bills: View utility bills
   - get_bill_detail: View specific bill details
+  - get_utility_preview: Preview utility charges before creating a bill (admin/staff)
+  - create_bill: Create a bill for a unit (admin/staff)
   - get_payment_history: View payment transaction history
+  - record_manual_payment: Record a manual payment at the counter (admin/staff)
+  - notify_bill_residents: Notify residents about a bill (admin)
   - get_amenities: View available facilities
   - get_amenity_detail: View facility details
   - get_amenity_categories: View facility categories
+  - create_amenity: Create a new amenity (admin/authorized staff)
+  - update_amenity: Update an existing amenity (admin/authorized staff)
+  - delete_amenity: Delete an amenity (admin/authorized staff)
   - book_amenity: Book a facility
   - get_my_bookings: View user's bookings
   - cancel_booking: Cancel a booking
+  - get_bookings_queue: View amenity booking queue (admin/staff)
+  - approve_booking: Approve an amenity booking (admin)
+  - reject_booking: Reject an amenity booking (admin)
   - create_incident: Report an issue
   - get_my_incidents: View reported issues
   - get_incident_detail: View issue details
+  - get_tickets_queue: View the operational ticket queue (admin/staff)
+  - update_ticket_status: Update ticket status (admin/staff)
+  - update_ticket_severity: Update ticket severity (admin/staff)
+  - assign_ticket: Assign a ticket to staff (admin/staff)
+  - approve_ticket: Approve a ticket (admin/staff)
+  - reject_ticket: Reject a ticket (admin/staff)
+  - complete_ticket: Complete a ticket (admin/staff)
   - get_ticket_comments: View issue comments/updates
   - add_ticket_comment: Add comment to an issue
   - get_ticket_categories: View issue categories
   - get_packages: Check packages
   - get_package_detail: View package details
   - delegate_pickup: Delegate package pickup to someone else
+  - delegate_pickup_by_id: Delegate package pickup using a delegate user ID
   - revoke_pickup_delegation: Cancel pickup delegation
+  - lookup_delivery_code: Lookup a resident by delivery code (admin/staff)
+  - lookup_parcel_resident: Lookup residents in a unit for parcel delegation (admin/staff)
+  - generate_pickup_token: Generate a pickup token/QR for a parcel
   - get_announcements: View building announcements
+  - get_announcement_detail: View announcement details
+  - create_announcement: Create a building announcement (admin)
   - get_notifications: View notifications
   - get_unread_notification_count: View unread notification count
   - mark_notification_read: Mark a notification as read
@@ -50,12 +73,62 @@ agentic: |
   - get_my_requests: View resident requests (cards, vehicles, visitors)
   - get_request_detail: View request details
   - get_request_types: View available request types
+  - get_resident_requests_queue: View resident request queue (admin/manager)
+  - create_resident_request: Create a resident request
+  - update_resident_request: Update a resident request
+  - delete_resident_request: Delete a resident request
+  - preverify_resident_request: Pre-verify a resident request (admin/manager)
+  - approve_resident_request: Approve a resident request (admin/manager)
+  - reject_resident_request: Reject a resident request (admin/manager)
+  - get_resident_request_audit_logs: View resident request audit logs
+  - get_resident_registries: View resident registry queue (admin/staff)
+  - get_resident_registry_detail: View resident registry detail
+  - create_resident_registry: Create a resident registry entry (admin/staff)
+  - delete_resident_registry: Delete a resident registry entry (admin/staff)
+  - bulk_update_resident_registry_status: Bulk update resident registry statuses (admin/staff)
+  - get_building_overview: View building overview
+  - get_blocks: View building blocks
+  - get_block_floors: View floors in a block
+  - get_units: View units
+  - get_unit_detail: View unit detail
+  - create_unit: Create a unit (admin)
+  - update_unit_status: Update unit status (admin)
+  - get_resident_units: View resident-unit mappings
+  - assign_resident_to_unit: Assign resident to unit (admin)
+  - get_access_cards: View access cards
+  - get_access_card_detail: View access card detail
+  - create_access_card: Create an access card (admin)
+  - update_access_card_status: Update access card status
+  - delete_access_card: Delete an access card (admin/manager)
+  - get_community_events: View community events
+  - get_community_event_detail: View community event detail
+  - create_community_event: Create a community event (admin/staff)
+  - register_community_event: Register for a community event
+  - get_users: View all users (admin/staff)
+  - get_user_detail: View user detail (admin/staff)
+  - get_user_overview: View users with roles and units (admin/staff)
+  - get_users_by_roles: View users filtered by roles (admin/staff)
+  - get_user_roles: View roles assigned to a user (admin/staff)
+  - create_privileged_user: Create admin/staff account (admin)
+  - create_resident_user: Create resident account (admin)
+  - update_user_admin: Update user details from backoffice (admin/staff)
+  - deactivate_user: Deactivate user account (admin/staff)
+  - get_roles: View all roles (admin)
+  - get_role_permissions: View permissions of a role (admin)
+  - create_role: Create a role (admin)
+  - assign_user_role: Assign role to user (admin)
+  - remove_user_role: Remove role from user (admin)
+  - add_role_permission: Add permission to role (admin)
+  - remove_role_permission: Remove permission from role (admin)
+  - get_permissions_catalog: View permission catalog (admin)
+  - create_permission: Create permission (admin)
   - register_visitor: Register a visitor
 
   ## Response Rules
   1. Call tools when needed to get real data
   2. After getting tool results, summarize them clearly
   3. If parameters are missing, ask the user for clarification
+  4. For high-impact actions like deleting, approving, rejecting, completing, or broadcasting notifications, ask for explicit confirmation before acting
 
   ## CRITICAL: Output Format
   Your final response MUST be a valid JSON object with exactly two keys:
@@ -101,24 +174,47 @@ action_router: |
   Available tools and their required permissions:
   - get_bills (Bills.Read): Get list of bills
   - get_bill_detail (Bills.Read): Get bill detail
+  - get_utility_preview (Bills.Write): Preview utility charges
+  - create_bill (Bills.Write): Create a bill
   - get_payment_history (Payments.Read): Get payment history
+  - record_manual_payment (Payments.Write): Record a manual payment
+  - notify_bill_residents (Bills.Notify): Notify residents about a bill
   - get_packages (Packages.Read): Get packages
   - get_package_detail (Packages.Read): Get package detail
   - delegate_pickup (Packages.Write): Delegate package pickup
+  - delegate_pickup_by_id (Packages.Write): Delegate package pickup by user ID
   - revoke_pickup_delegation (Packages.Write): Cancel pickup delegation
+  - lookup_delivery_code (Packages.Manage): Lookup resident by delivery code
+  - lookup_parcel_resident (Packages.Manage): Lookup resident in unit
+  - generate_pickup_token (Packages.Read): Generate parcel pickup token
   - get_amenities (Public): Get amenities list
   - get_amenity_detail (Public): Get amenity detail
   - get_amenity_categories (Public): Get amenity categories
+  - create_amenity (Amenities.Write): Create a new amenity
+  - update_amenity (Amenities.Write): Update an amenity
+  - delete_amenity (Amenities.Delete): Delete an amenity
   - get_my_bookings (Bookings.Read): Get user's bookings
+  - get_bookings_queue (Bookings.Manage): Get operational booking queue
   - book_amenity (Bookings.Write): Book an amenity
   - cancel_booking (Bookings.Write): Cancel a booking
+  - approve_booking (Bookings.Manage): Approve an amenity booking
+  - reject_booking (Bookings.Manage): Reject an amenity booking
   - get_my_incidents (Tickets.Read): Get user's incidents
   - get_incident_detail (Tickets.Read): Get incident detail
+  - get_tickets_queue (Tickets.Manage): Get operational ticket queue
+  - update_ticket_status (Tickets.Manage): Update ticket status
+  - update_ticket_severity (Tickets.Manage): Update ticket severity
+  - approve_ticket (Tickets.Manage): Approve a ticket
+  - reject_ticket (Tickets.Manage): Reject a ticket
+  - complete_ticket (Tickets.Manage): Complete a ticket
+  - assign_ticket (Tickets.Assign): Assign a ticket
   - get_ticket_comments (Tickets.Read): Get issue comments
   - create_incident (Tickets.Write): Create a new incident
   - add_ticket_comment (Tickets.Write): Add comment to issue
   - get_ticket_categories (Public): Get issue categories
   - get_announcements (Public): Get announcements
+  - get_announcement_detail (Announcements.Read): Get announcement detail
+  - create_announcement (Announcements.Write): Create an announcement
   - get_notifications (Notifications.Read): Get notifications
   - get_unread_notification_count (Notifications.Read): Get unread count
   - mark_notification_read (Notifications.Write): Mark notification as read
@@ -128,6 +224,55 @@ action_router: |
   - register_visitor (Visitors.Write): Register a visitor
   - get_my_requests (Requests.Read): Get resident requests
   - get_request_detail (Requests.Read): Get request detail
+  - get_resident_requests_queue (Requests.Manage): Get resident request queue
+  - get_resident_request_audit_logs (Requests.Manage): Get resident request audit logs
+  - create_resident_request (Requests.Write): Create a resident request
+  - update_resident_request (Requests.Write): Update a resident request
+  - delete_resident_request (Requests.Write): Delete a resident request
+  - preverify_resident_request (Requests.Approve): Pre-verify a resident request
+  - approve_resident_request (Requests.Approve): Approve a resident request
+  - reject_resident_request (Requests.Approve): Reject a resident request
+  - get_resident_registries (ResidentRegistries.Read): Get resident registries
+  - get_resident_registry_detail (ResidentRegistries.Read): Get resident registry detail
+  - create_resident_registry (ResidentRegistries.Write): Create a resident registry entry
+  - delete_resident_registry (ResidentRegistries.Write): Delete a resident registry entry
+  - bulk_update_resident_registry_status (ResidentRegistries.Write): Bulk update resident registry statuses
+  - get_building_overview (Buildings.Read): Get building overview
+  - get_blocks (Buildings.Read): Get blocks
+  - get_block_floors (Buildings.Read): Get block floors
+  - get_units (Units.Read): Get units
+  - get_unit_detail (Units.Read): Get unit detail
+  - create_unit (Units.Write): Create unit
+  - update_unit_status (Units.Write): Update unit status
+  - get_resident_units (Buildings.Read): Get resident-unit mappings
+  - assign_resident_to_unit (Units.Write): Assign resident to unit
+  - get_access_cards (AccessCards.Read): Get access cards
+  - get_access_card_detail (AccessCards.Read): Get access card detail
+  - create_access_card (AccessCards.Write): Create access card
+  - update_access_card_status (AccessCards.Write): Update access card status
+  - delete_access_card (AccessCards.Write): Delete access card
+  - get_community_events (CommunityEvents.Read): Get community events
+  - get_community_event_detail (CommunityEvents.Read): Get community event detail
+  - create_community_event (CommunityEvents.Write): Create community event
+  - register_community_event (CommunityEvents.Read): Register community event
+  - get_users (Users.AdminRead): Get all users
+  - get_user_detail (Users.AdminRead): Get user detail
+  - get_user_overview (Users.AdminRead): Get user overview
+  - get_users_by_roles (Users.AdminRead): Get users by roles
+  - get_user_roles (Users.AdminRead): Get user roles
+  - create_privileged_user (Users.AdminWrite): Create admin or staff user
+  - create_resident_user (Users.AdminWrite): Create resident user
+  - update_user_admin (Users.AdminWrite): Update user details
+  - deactivate_user (Users.AdminWrite): Deactivate user
+  - get_roles (Roles.Read): Get roles
+  - get_role_permissions (Roles.Read): Get role permissions
+  - create_role (Roles.Write): Create role
+  - assign_user_role (Users.AdminWrite): Assign role to user
+  - remove_user_role (Users.AdminWrite): Remove role from user
+  - add_role_permission (Roles.Write): Add permission to role
+  - remove_role_permission (Roles.Write): Remove permission from role
+  - get_permissions_catalog (Permissions.Read): Get permission catalog
+  - create_permission (Permissions.Write): Create permission
   - get_request_types (Public): Get request types
   - get_profile (Public): Get user profile
   - update_contact (Users.Write): Update contact info
@@ -178,26 +323,99 @@ action_suggester: |
   ## Available tools
   - get_bills: View utility bills
   - get_bill_detail: View specific bill details
+  - get_utility_preview: Preview utility charges
+  - create_bill: Create a bill
   - get_payment_history: View payment transaction history
+  - record_manual_payment: Record a manual payment
+  - notify_bill_residents: Notify residents about a bill
   - get_packages: Check packages
   - get_package_detail: View package details
   - delegate_pickup: Delegate package pickup
+  - delegate_pickup_by_id: Delegate package pickup by user ID
+  - revoke_pickup_delegation: Cancel pickup delegation
+  - lookup_delivery_code: Lookup resident by delivery code
+  - lookup_parcel_resident: Lookup resident in unit
+  - generate_pickup_token: Generate parcel pickup token
   - get_amenities: View available facilities
   - get_amenity_detail: View facility details
   - get_amenity_categories: View facility categories
+  - create_amenity: Create a new amenity
+  - update_amenity: Update an existing amenity
+  - delete_amenity: Delete an amenity
   - get_my_bookings: View user's bookings
+  - get_bookings_queue: View booking queue
   - book_amenity: Book a facility
   - cancel_booking: Cancel a booking
+  - approve_booking: Approve a booking
+  - reject_booking: Reject a booking
   - create_incident: Report an issue
   - get_my_incidents: View reported issues
   - get_incident_detail: View issue details
+  - get_tickets_queue: View operational tickets
+  - update_ticket_status: Update ticket status
+  - update_ticket_severity: Update ticket severity
+  - assign_ticket: Assign a ticket
+  - approve_ticket: Approve a ticket
+  - reject_ticket: Reject a ticket
+  - complete_ticket: Complete a ticket
   - get_ticket_comments: View issue comments
   - get_ticket_categories: View issue categories
   - get_notifications: View notifications
   - get_unread_notification_count: View unread notification count
   - get_announcements: View building announcements
+  - get_announcement_detail: View announcement details
+  - create_announcement: Create a building announcement
   - get_surveys: View surveys
   - get_my_requests: View resident requests
+  - get_resident_requests_queue: View resident request queue
+  - create_resident_request: Create a resident request
+  - update_resident_request: Update a resident request
+  - delete_resident_request: Delete a resident request
+  - preverify_resident_request: Pre-verify a resident request
+  - approve_resident_request: Approve a resident request
+  - reject_resident_request: Reject a resident request
+  - get_resident_request_audit_logs: View resident request audit logs
+  - get_resident_registries: View resident registries
+  - get_resident_registry_detail: View resident registry detail
+  - create_resident_registry: Create resident registry entry
+  - delete_resident_registry: Delete resident registry entry
+  - bulk_update_resident_registry_status: Bulk update resident registry statuses
+  - get_building_overview: View building overview
+  - get_blocks: View building blocks
+  - get_block_floors: View block floors
+  - get_units: View units
+  - get_unit_detail: View unit detail
+  - create_unit: Create a unit
+  - update_unit_status: Update unit status
+  - get_resident_units: View resident-unit mappings
+  - assign_resident_to_unit: Assign resident to unit
+  - get_access_cards: View access cards
+  - get_access_card_detail: View access card detail
+  - create_access_card: Create an access card
+  - update_access_card_status: Update access card status
+  - delete_access_card: Delete an access card
+  - get_community_events: View community events
+  - get_community_event_detail: View community event detail
+  - create_community_event: Create a community event
+  - register_community_event: Register for a community event
+  - get_users: View all users
+  - get_user_detail: View user detail
+  - get_user_overview: View user overview
+  - get_users_by_roles: View users by roles
+  - get_user_roles: View roles assigned to a user
+  - create_privileged_user: Create admin or staff user
+  - create_resident_user: Create resident user
+  - update_user_admin: Update user details
+  - deactivate_user: Deactivate user
+  - get_roles: View roles
+  - get_role_permissions: View role permissions
+  - create_role: Create role
+  - assign_user_role: Assign role to user
+  - remove_user_role: Remove role from user
+  - add_role_permission: Add permission to role
+  - remove_role_permission: Remove permission from role
+  - get_permissions_catalog: View permission catalog
+  - create_permission: Create permission
   - get_request_types: View request types
   - register_visitor: Register a visitor
   - get_profile: View profile

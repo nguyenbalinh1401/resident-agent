@@ -118,6 +118,57 @@ class PermissionMapper:
 
         return [t for t in TOOLS if t["function"]["name"] in tool_names]
 
+    def get_role_permission_preset(self, role: Optional[str]) -> List[Dict[str, str]]:
+        """Get local permission preset for a role."""
+        if not role:
+            return []
+
+        presets = self._config.get("role_permission_presets", {})
+        return presets.get(role, presets.get(role.title(), [])) or []
+
+    def constrain_permissions_to_role(
+        self,
+        role: Optional[str],
+        permissions: List[Dict[str, str]],
+    ) -> List[Dict[str, str]]:
+        """Constrain backend permissions to a local role preset.
+
+        This keeps agent capabilities aligned with the signed-in role even if
+        the upstream permissions endpoint returns a broader permission catalog.
+        """
+        preset = self.get_role_permission_preset(role)
+        if not preset:
+            return permissions
+
+        if any(p.get("resource") == "*" for p in preset):
+            return preset
+
+        allowed = {
+            f"{p.get('resource')}.{p.get('action')}"
+            for p in preset
+        }
+
+        if not permissions:
+            return preset
+
+        constrained = [
+            p for p in permissions
+            if f"{p.get('resource')}.{p.get('action')}" in allowed
+        ]
+
+        # Merge preset-only synthetic permissions so the agent can expose
+        # role-scoped operational tools even when the upstream API only
+        # returns a coarse permission catalog.
+        existing = {
+            f"{p.get('resource')}.{p.get('action')}"
+            for p in constrained
+        }
+        merged = constrained + [
+            p for p in preset
+            if f"{p.get('resource')}.{p.get('action')}" not in existing
+        ]
+        return merged or preset
+
     def get_tool_permission(self, tool_name: str) -> Optional[str]:
         """Get required permission for a tool.
 

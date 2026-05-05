@@ -6,32 +6,60 @@ permission_to_tools:
   # Profile
   "Users.Read": ["get_profile"]
   "Users.Write": ["update_contact", "request_resident_verification"]
+  "Users.AdminRead": ["get_users", "get_user_detail", "get_user_overview", "get_users_by_roles", "get_user_roles"]
+  "Users.AdminWrite": ["create_privileged_user", "create_resident_user", "update_user_admin", "deactivate_user", "assign_user_role", "remove_user_role"]
+  "Roles.Read": ["get_roles", "get_role_permissions"]
+  "Roles.Write": ["create_role", "add_role_permission", "remove_role_permission"]
+  "Permissions.Read": ["get_permissions_catalog"]
+  "Permissions.Write": ["create_permission"]
 
   # Bookings/Amenities
   "Bookings.Read": ["get_amenities", "get_amenity_detail", "get_my_bookings"]
   "Bookings.Write": ["book_amenity", "cancel_booking"]
+  "Bookings.Manage": ["get_bookings_queue", "approve_booking", "reject_booking"]
+  "Amenities.Read": ["get_amenities", "get_amenity_detail", "get_amenity_categories"]
+  "Amenities.Write": ["create_amenity", "update_amenity"]
+  "Amenities.Delete": ["delete_amenity"]
 
   # Tickets/Incidents
   "Tickets.Read": ["get_my_incidents", "get_incident_detail", "get_ticket_comments"]
   "Tickets.Write": ["create_incident", "add_ticket_comment"]
+  "Tickets.Manage": ["get_tickets_queue", "update_ticket_status", "update_ticket_severity", "approve_ticket", "reject_ticket", "complete_ticket"]
+  "Tickets.Assign": ["assign_ticket"]
 
   # Bills
   "Bills.Read": ["get_bills", "get_bill_detail", "get_fee_types"]
-  "Bills.Write": ["create_bill"]
+  "Bills.Write": ["create_bill", "get_utility_preview"]
+  "Bills.Notify": ["notify_bill_residents"]
 
-  # Payments (read-only)
+  # Payments
   "Payments.Read": ["get_payment_history"]
+  "Payments.Write": ["record_manual_payment"]
 
   # Packages
-  "Packages.Read": ["get_packages", "get_package_detail"]
-  "Packages.Write": ["delegate_pickup", "revoke_pickup_delegation"]
+  "Packages.Read": ["get_packages", "get_package_detail", "generate_pickup_token"]
+  "Packages.Write": ["delegate_pickup", "delegate_pickup_by_id", "revoke_pickup_delegation"]
+  "Packages.Manage": ["lookup_delivery_code", "lookup_parcel_resident"]
 
   # Notifications
   "Notifications.Read": ["get_notifications", "get_announcements", "get_unread_notification_count"]
   "Notifications.Write": ["mark_notification_read", "mark_all_notifications_read"]
+  "Announcements.Read": ["get_announcements", "get_announcement_detail"]
+  "Announcements.Write": ["create_announcement"]
 
   # Resident Requests
   "Requests.Read": ["get_my_requests", "get_request_detail"]
+  "Requests.Write": ["create_resident_request", "update_resident_request", "delete_resident_request", "register_vehicle"]
+  "Requests.Manage": ["get_resident_requests_queue", "get_resident_request_audit_logs"]
+  "Requests.Approve": ["preverify_resident_request", "approve_resident_request", "reject_resident_request"]
+
+  # Access Cards
+  "AccessCards.Read": ["get_access_cards", "get_access_card_detail"]
+  "AccessCards.Write": ["create_access_card", "update_access_card_status", "delete_access_card"]
+
+  # Community Events
+  "CommunityEvents.Read": ["get_community_events", "get_community_event_detail", "register_community_event"]
+  "CommunityEvents.Write": ["create_community_event"]
 
   # Surveys
   "Surveys.Read": ["get_surveys"]
@@ -44,11 +72,87 @@ permission_to_tools:
   "Vehicles.Read": ["get_my_vehicles"]
 
   # Admin: Resident Registries (Waitlist)
-  "ResidentRegistries.Read": ["get_resident_registries"]
-  "ResidentRegistries.Write": ["approve_resident_verification"]
+  "ResidentRegistries.Read": ["get_resident_registries", "get_resident_registry_detail"]
+  "ResidentRegistries.Write": ["approve_resident_verification", "create_resident_registry", "delete_resident_registry", "bulk_update_resident_registry_status"]
 
-  # Units
-  "Units.Read": ["get_units"]
+  # Buildings / Units
+  "Buildings.Read": ["get_building_overview", "get_blocks", "get_block_floors", "get_resident_units"]
+  "Units.Read": ["get_units", "get_unit_detail"]
+  "Units.Write": ["create_unit", "update_unit_status", "assign_resident_to_unit"]
+
+# Local role presets used as a safety ceiling when the backend only returns
+# a permission catalog instead of role-scoped grants.
+role_permission_presets:
+  Admin:
+    - { resource: "*", action: "*" }
+  Manager:
+    - { resource: "AccessCards", action: "Read" }
+    - { resource: "AccessCards", action: "Write" }
+    - { resource: "CommunityEvents", action: "Read" }
+    - { resource: "Buildings", action: "Read" }
+    - { resource: "Requests", action: "Read" }
+    - { resource: "Requests", action: "Manage" }
+    - { resource: "Requests", action: "Approve" }
+    - { resource: "ResidentRegistries", action: "Read" }
+    - { resource: "ResidentRegistries", action: "Write" }
+    - { resource: "Tickets", action: "Read" }
+    - { resource: "Tickets", action: "Manage" }
+    - { resource: "Bookings", action: "Read" }
+    - { resource: "Packages", action: "Read" }
+    - { resource: "Packages", action: "Manage" }
+    - { resource: "Bills", action: "Read" }
+    - { resource: "Payments", action: "Read" }
+    - { resource: "Units", action: "Read" }
+  Staff:
+    - { resource: "Users", action: "AdminRead" }
+    - { resource: "CommunityEvents", action: "Read" }
+    - { resource: "CommunityEvents", action: "Write" }
+    - { resource: "Buildings", action: "Read" }
+    - { resource: "Tickets", action: "Read" }
+    - { resource: "Tickets", action: "Write" }
+    - { resource: "Tickets", action: "Manage" }
+    - { resource: "Tickets", action: "Assign" }
+    - { resource: "Bookings", action: "Read" }
+    - { resource: "Packages", action: "Read" }
+    - { resource: "Packages", action: "Write" }
+    - { resource: "Packages", action: "Manage" }
+    - { resource: "Bills", action: "Read" }
+    - { resource: "Bills", action: "Write" }
+    - { resource: "Bookings", action: "Read" }
+    - { resource: "Amenities", action: "Read" }
+    - { resource: "Notifications", action: "Read" }
+    - { resource: "Notifications", action: "Write" }
+    - { resource: "Payments", action: "Read" }
+    - { resource: "Payments", action: "Write" }
+    - { resource: "Requests", action: "Read" }
+    - { resource: "ResidentRegistries", action: "Read" }
+    - { resource: "ResidentRegistries", action: "Write" }
+    - { resource: "Units", action: "Read" }
+    - { resource: "Visitors", action: "Write" }
+    - { resource: "Vehicles", action: "Read" }
+    - { resource: "Surveys", action: "Read" }
+  Resident:
+    - { resource: "AccessCards", action: "Read" }
+    - { resource: "AccessCards", action: "Write" }
+    - { resource: "CommunityEvents", action: "Read" }
+    - { resource: "Buildings", action: "Read" }
+    - { resource: "Users", action: "Write" }
+    - { resource: "Bookings", action: "Read" }
+    - { resource: "Bookings", action: "Write" }
+    - { resource: "Tickets", action: "Read" }
+    - { resource: "Tickets", action: "Write" }
+    - { resource: "Bills", action: "Read" }
+    - { resource: "Payments", action: "Read" }
+    - { resource: "Packages", action: "Read" }
+    - { resource: "Packages", action: "Write" }
+    - { resource: "Notifications", action: "Read" }
+    - { resource: "Notifications", action: "Write" }
+    - { resource: "Requests", action: "Read" }
+    - { resource: "Requests", action: "Write" }
+    - { resource: "Surveys", action: "Read" }
+    - { resource: "Surveys", action: "Write" }
+    - { resource: "Visitors", action: "Write" }
+    - { resource: "Vehicles", action: "Read" }
 
 # Tools that everyone can access (even without specific permissions)
 default_tools:
@@ -64,23 +168,37 @@ tool_to_permission:
   get_bills: "Bills.Read"
   get_bill_detail: "Bills.Read"
   create_bill: "Bills.Write"
+  get_utility_preview: "Bills.Write"
   get_fee_types: "Bills.Read"
+  notify_bill_residents: "Bills.Notify"
 
   # Payments
   get_payment_history: "Payments.Read"
+  record_manual_payment: "Payments.Write"
 
   # Packages
   get_packages: "Packages.Read"
   get_package_detail: "Packages.Read"
+  generate_pickup_token: "Packages.Read"
   delegate_pickup: "Packages.Write"
+  delegate_pickup_by_id: "Packages.Write"
   revoke_pickup_delegation: "Packages.Write"
+  lookup_delivery_code: "Packages.Manage"
+  lookup_parcel_resident: "Packages.Manage"
 
   # Bookings/Amenities
   get_amenities: null  # Public - no permission required
   get_amenity_detail: null  # Public
+  get_amenity_categories: null  # Public
   get_my_bookings: "Bookings.Read"
+  get_bookings_queue: "Bookings.Manage"
   book_amenity: "Bookings.Write"
   cancel_booking: "Bookings.Write"
+  approve_booking: "Bookings.Manage"
+  reject_booking: "Bookings.Manage"
+  create_amenity: "Amenities.Write"
+  update_amenity: "Amenities.Write"
+  delete_amenity: "Amenities.Delete"
 
   # Tickets/Incidents
   get_my_incidents: "Tickets.Read"
@@ -88,9 +206,18 @@ tool_to_permission:
   create_incident: "Tickets.Write"
   get_ticket_comments: "Tickets.Read"
   add_ticket_comment: "Tickets.Write"
+  get_tickets_queue: "Tickets.Manage"
+  update_ticket_status: "Tickets.Manage"
+  update_ticket_severity: "Tickets.Manage"
+  approve_ticket: "Tickets.Manage"
+  reject_ticket: "Tickets.Manage"
+  complete_ticket: "Tickets.Manage"
+  assign_ticket: "Tickets.Assign"
 
   # Notifications
   get_announcements: null  # Public
+  get_announcement_detail: "Announcements.Read"
+  create_announcement: "Announcements.Write"
   get_notifications: "Notifications.Read"
   get_unread_notification_count: "Notifications.Read"
   mark_notification_read: "Notifications.Write"
@@ -98,7 +225,6 @@ tool_to_permission:
 
   # Reference Data (public)
   get_ticket_categories: null
-  get_amenity_categories: null
   get_request_types: null
 
   # Surveys
@@ -111,19 +237,70 @@ tool_to_permission:
   # Resident Requests
   get_my_requests: "Requests.Read"
   get_request_detail: "Requests.Read"
+  get_resident_requests_queue: "Requests.Manage"
+  get_resident_request_audit_logs: "Requests.Manage"
+  preverify_resident_request: "Requests.Approve"
+  approve_resident_request: "Requests.Approve"
+  reject_resident_request: "Requests.Approve"
+  create_resident_request: "Requests.Write"
+  update_resident_request: "Requests.Write"
+  delete_resident_request: "Requests.Write"
   register_vehicle: "Requests.Write"
+
+  # Access Cards
+  get_access_cards: "AccessCards.Read"
+  get_access_card_detail: "AccessCards.Read"
+  create_access_card: "AccessCards.Write"
+  update_access_card_status: "AccessCards.Write"
+  delete_access_card: "AccessCards.Write"
+
+  # Community Events
+  get_community_events: "CommunityEvents.Read"
+  get_community_event_detail: "CommunityEvents.Read"
+  create_community_event: "CommunityEvents.Write"
+  register_community_event: "CommunityEvents.Read"
 
   # Resident Registries (Admin)
   get_resident_registries: "ResidentRegistries.Read"
+  get_resident_registry_detail: "ResidentRegistries.Read"
   approve_resident_verification: "ResidentRegistries.Write"
+  create_resident_registry: "ResidentRegistries.Write"
+  delete_resident_registry: "ResidentRegistries.Write"
+  bulk_update_resident_registry_status: "ResidentRegistries.Write"
 
-  # Units
+  # Buildings / Units
+  get_building_overview: "Buildings.Read"
+  get_blocks: "Buildings.Read"
+  get_block_floors: "Buildings.Read"
+  get_resident_units: "Buildings.Read"
   get_units: "Units.Read"
+  get_unit_detail: "Units.Read"
+  create_unit: "Units.Write"
+  update_unit_status: "Units.Write"
+  assign_resident_to_unit: "Units.Write"
 
   # User
   get_profile: null  # No permission required
   update_contact: "Users.Write"
   request_resident_verification: "Users.Write"
+  get_users: "Users.AdminRead"
+  get_user_detail: "Users.AdminRead"
+  get_user_overview: "Users.AdminRead"
+  get_users_by_roles: "Users.AdminRead"
+  get_user_roles: "Users.AdminRead"
+  create_privileged_user: "Users.AdminWrite"
+  create_resident_user: "Users.AdminWrite"
+  update_user_admin: "Users.AdminWrite"
+  deactivate_user: "Users.AdminWrite"
+  assign_user_role: "Users.AdminWrite"
+  remove_user_role: "Users.AdminWrite"
+  get_roles: "Roles.Read"
+  get_role_permissions: "Roles.Read"
+  create_role: "Roles.Write"
+  add_role_permission: "Roles.Write"
+  remove_role_permission: "Roles.Write"
+  get_permissions_catalog: "Permissions.Read"
+  create_permission: "Permissions.Write"
 
   # Vehicles
   get_my_vehicles: "Vehicles.Read"

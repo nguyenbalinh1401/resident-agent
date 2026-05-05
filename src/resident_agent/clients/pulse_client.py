@@ -328,6 +328,33 @@ class PulseClient:
         }
         return await self._request("POST", "/api/Bills", json_data=payload)
 
+    async def get_utility_preview(
+        self,
+        unit_id: str,
+        billing_month: str,
+    ) -> List[Dict]:
+        """Get utility preview rows for a unit and billing month (Admin/Staff).
+
+        Args:
+            unit_id: ID of the unit
+            billing_month: Billing month in YYYY-MM-01 format
+
+        Returns:
+            List of calculated preview rows
+        """
+        return await self._request(
+            "GET",
+            "/api/Bills/utility-preview",
+            params={
+                "unitId": unit_id,
+                "billingMonth": billing_month,
+            },
+        )
+
+    async def notify_bill_residents(self, bill_id: str) -> Dict[str, Any]:
+        """Notify residents of a bill (Admin only)."""
+        return await self._request("POST", f"/api/Bills/{bill_id}/notify")
+
     async def get_fee_types(self) -> List[Dict]:
         """Get list of fee types (Management, Electricity, Water, etc.)."""
         return await self._request("GET", "/api/FeeTypes")
@@ -358,6 +385,25 @@ class PulseClient:
                 "amount": amount,
                 "paymentMethod": payment_method
             }
+        )
+
+    async def record_manual_payment(
+        self,
+        bill_id: str,
+        paid_by: str,
+        amount_paid: float,
+        payment_method: str,
+    ) -> Dict[str, Any]:
+        """Record a manual counter payment (Admin/Staff)."""
+        return await self._request(
+            "POST",
+            "/api/Payments/manual",
+            json_data={
+                "billId": bill_id,
+                "paidBy": paid_by,
+                "amountPaid": amount_paid,
+                "paymentMethod": payment_method,
+            },
         )
 
     # ==================== Tickets (Maintenance/Incidents) ====================
@@ -395,18 +441,37 @@ class PulseClient:
 
         return await self._request("POST", "/api/Tickets", json_data=payload)
 
-    async def get_tickets(self, status: Optional[str] = None) -> List[Dict]:
+    async def get_tickets(
+        self,
+        status: Optional[str] = None,
+        reported_by: Optional[str] = None,
+        category_id: Optional[str] = None,
+        severity: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> List[Dict]:
         """Get tickets for current user.
 
         Args:
             status: Filter by status (Pending, InProgress, Resolved, Closed)
+            reported_by: Filter by reporter user ID
+            category_id: Filter by category ID
+            severity: Filter by severity
+            page: Page number
+            page_size: Page size
 
         Returns:
             List of tickets
         """
-        params = {}
+        params: Dict[str, Any] = {"page": page, "pageSize": page_size}
         if status:
             params["status"] = status
+        if reported_by:
+            params["reportedBy"] = reported_by
+        if category_id:
+            params["categoryId"] = category_id
+        if severity:
+            params["severity"] = severity
 
         return await self._request("GET", "/api/Tickets", params=params)
 
@@ -448,23 +513,96 @@ class PulseClient:
             json_data={"content": content},
         )
 
+    async def update_ticket_status(self, ticket_id: str, status: str) -> Dict[str, Any]:
+        """Update ticket status (Admin/Staff)."""
+        return await self._request(
+            "PUT",
+            f"/api/Tickets/{ticket_id}/status",
+            json_data={"status": status},
+        )
+
+    async def update_ticket_severity(self, ticket_id: str, severity: str) -> Dict[str, Any]:
+        """Update ticket severity."""
+        return await self._request(
+            "PUT",
+            f"/api/Tickets/{ticket_id}/severity",
+            json_data={"severity": severity},
+        )
+
+    async def assign_ticket(
+        self,
+        ticket_id: str,
+        assigned_to: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Assign a ticket to a staff member (Admin/Staff)."""
+        payload: Dict[str, Any] = {
+            "assignedTo": assigned_to,
+            "notes": notes,
+        }
+        return await self._request("PUT", f"/api/Tickets/{ticket_id}/assign", json_data=payload)
+
+    async def approve_ticket(self, ticket_id: str) -> Dict[str, Any]:
+        """Approve a ticket (Admin/Staff)."""
+        return await self._request("POST", f"/api/Tickets/{ticket_id}/approve")
+
+    async def reject_ticket(self, ticket_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        """Reject a ticket (Admin/Staff)."""
+        return await self._request(
+            "POST",
+            f"/api/Tickets/{ticket_id}/reject",
+            json_data={"reason": reason},
+        )
+
+    async def complete_ticket(self, ticket_id: str, note: Optional[str] = None) -> Dict[str, Any]:
+        """Complete a ticket (Admin/Staff)."""
+        return await self._request(
+            "POST",
+            f"/api/Tickets/{ticket_id}/complete",
+            json_data={"note": note},
+        )
+
     # ==================== Packages ====================
 
-    async def get_packages(self, unit_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
+    async def get_packages(
+        self,
+        unit_id: Optional[str] = None,
+        status: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        resident_id: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> List[Dict]:
         """Get packages for current user/unit.
 
         Args:
             unit_id: Filter by unit ID
             status: Filter by status (Arrived, PickedUp)
+            owner_id: Filter by parcel owner user ID
+            resident_id: Filter by resident ID
+            date_from: Filter from datetime
+            date_to: Filter to datetime
+            page: Page number
+            page_size: Page size
 
         Returns:
             List of packages
         """
-        params = {}
+        params: Dict[str, Any] = {"page": page, "pageSize": page_size}
         if unit_id:
             params["unitId"] = unit_id
         if status:
             params["status"] = status
+        if owner_id:
+            params["ownerId"] = owner_id
+        if resident_id:
+            params["residentId"] = resident_id
+        if date_from:
+            params["dateFrom"] = date_from
+        if date_to:
+            params["dateTo"] = date_to
 
         return await self._request("GET", "/api/Parcels", params=params)
 
@@ -480,14 +618,15 @@ class PulseClient:
         return await self._request("GET", f"/api/Parcels/{package_id}")
 
     async def delegate_pickup(
-        self, parcel_id: str, delegate_name: str, delegate_phone: str
+        self,
+        parcel_id: str,
+        delegatee_id: str,
     ) -> Dict[str, Any]:
         """Delegate parcel pickup to another person.
 
         Args:
             parcel_id: Parcel ID
-            delegate_name: Name of the delegate
-            delegate_phone: Phone number of the delegate
+            delegatee_id: User ID of the delegatee
 
         Returns:
             Delegation result
@@ -495,10 +634,7 @@ class PulseClient:
         return await self._request(
             "POST",
             f"/api/Parcels/{parcel_id}/delegate",
-            json_data={
-                "delegateName": delegate_name,
-                "delegatePhone": delegate_phone,
-            },
+            json_data={"delegateeId": delegatee_id},
         )
 
     async def revoke_pickup_delegation(self, parcel_id: str) -> Dict[str, Any]:
@@ -511,6 +647,22 @@ class PulseClient:
             Revocation result
         """
         return await self._request("DELETE", f"/api/Parcels/{parcel_id}/delegate")
+
+    async def lookup_delivery_code(self, code: str) -> List[Dict]:
+        """Autocomplete resident by delivery code (Admin/Staff)."""
+        return await self._request("GET", "/api/Parcels/lookup", params={"code": code})
+
+    async def lookup_parcel_resident(self, unit_id: str, name: str) -> List[Dict]:
+        """Lookup resident within a unit for parcel delegation/help."""
+        return await self._request(
+            "GET",
+            "/api/Parcels/resident-lookup",
+            params={"unitId": unit_id, "name": name},
+        )
+
+    async def generate_pickup_token(self, parcel_id: str) -> Dict[str, Any]:
+        """Generate pickup token/QR payload for a parcel (Resident)."""
+        return await self._request("GET", f"/api/Parcels/{parcel_id}/pickup-token")
 
     # ==================== Amenities & Bookings ====================
 
@@ -539,6 +691,67 @@ class PulseClient:
             Amenity details
         """
         return await self._request("GET", f"/api/Amenities/{amenity_id}")
+
+    async def create_amenity(
+        self,
+        category_id: str,
+        name: str,
+        type: str,
+        description: Optional[str] = None,
+        capacity: Optional[int] = None,
+        require_approval: bool = False,
+        max_concurrent_bookings: Optional[int] = None,
+        is_active: bool = True,
+    ) -> Dict[str, Any]:
+        """Create a new amenity (Admin/authorized role)."""
+        payload: Dict[str, Any] = {
+            "categoryId": category_id,
+            "name": name,
+            "type": type,
+            "requireApproval": require_approval,
+            "isActive": is_active,
+        }
+        if description is not None:
+            payload["description"] = description
+        if capacity is not None:
+            payload["capacity"] = capacity
+        if max_concurrent_bookings is not None:
+            payload["maxConcurrentBookings"] = max_concurrent_bookings
+
+        return await self._request("POST", "/api/Amenities", json_data=payload)
+
+    async def update_amenity(
+        self,
+        amenity_id: str,
+        category_id: str,
+        name: str,
+        type: str,
+        max_concurrent_bookings: int,
+        is_active: bool,
+        description: Optional[str] = None,
+        capacity: Optional[int] = None,
+        require_approval: bool = False,
+    ) -> Dict[str, Any]:
+        """Update an existing amenity (Admin/authorized role)."""
+        payload: Dict[str, Any] = {
+            "id": amenity_id,
+            "categoryId": category_id,
+            "name": name,
+            "type": type,
+            "maxConcurrentBookings": max_concurrent_bookings,
+            "isActive": is_active,
+            "requireApproval": require_approval,
+        }
+        if description is not None:
+            payload["description"] = description
+        if capacity is not None:
+            payload["capacity"] = capacity
+
+        return await self._request("PUT", f"/api/Amenities/{amenity_id}", json_data=payload)
+
+    async def delete_amenity(self, amenity_id: str) -> Dict[str, Any]:
+        """Delete an amenity (Admin/authorized role)."""
+        return await self._request("DELETE", f"/api/Amenities/{amenity_id}")
 
     async def create_booking(
         self,
@@ -584,6 +797,40 @@ class PulseClient:
 
         return await self._request("GET", "/api/Bookings", params=params)
 
+    async def get_bookings_queue(
+        self,
+        status: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        amenity_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Dict]:
+        """Get operational booking queue for admin/staff scopes."""
+        params: Dict[str, Any] = {}
+        if status:
+            params["status"] = status
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        if amenity_id:
+            params["amenityId"] = amenity_id
+        if user_id:
+            params["userId"] = user_id
+        return await self._request("GET", "/api/Bookings", params=params)
+
+    async def approve_booking(self, booking_id: str) -> Dict[str, Any]:
+        """Approve a pending booking."""
+        return await self._request("POST", f"/api/Bookings/{booking_id}/approve")
+
+    async def reject_booking(self, booking_id: str, reason: str) -> Dict[str, Any]:
+        """Reject a pending booking with a reason."""
+        return await self._request(
+            "POST",
+            f"/api/Bookings/{booking_id}/reject",
+            json_data={"reason": reason},
+        )
+
     async def cancel_booking(self, booking_id: str) -> Dict[str, Any]:
         """Cancel a booking.
 
@@ -607,7 +854,7 @@ class PulseClient:
 
     async def get_request_types(self) -> List[Dict]:
         """Get available resident request types."""
-        return await self._request("GET", "/api/ResidentRequests/request-types")
+        return await self._request("GET", "/api/ResidentRequests/types")
 
     # ==================== Surveys ====================
 
@@ -700,6 +947,71 @@ class PulseClient:
         """
         return await self._request("GET", f"/api/ResidentRequests/{request_id}")
 
+    async def create_resident_request(
+        self,
+        requester_id: str,
+        request_type_id: str,
+        request_data_json: str,
+    ) -> Dict[str, Any]:
+        """Create a resident request."""
+        return await self._request(
+            "POST",
+            "/api/ResidentRequests",
+            json_data={
+                "requesterId": requester_id,
+                "requestTypeId": request_type_id,
+                "requestDataJson": request_data_json,
+            },
+        )
+
+    async def approve_resident_request(
+        self,
+        request_id: str,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Approve a resident request (Admin/Manager)."""
+        return await self._request(
+            "POST",
+            f"/api/ResidentRequests/{request_id}/approve",
+            json_data={"notes": notes},
+        )
+
+    async def reject_resident_request(
+        self,
+        request_id: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """Reject a resident request (Admin/Manager)."""
+        return await self._request(
+            "POST",
+            f"/api/ResidentRequests/{request_id}/reject",
+            json_data={"reason": reason},
+        )
+
+    async def preverify_resident_request(self, request_id: str) -> Dict[str, Any]:
+        """Run pre-verify checks for a resident request (Admin/Manager)."""
+        return await self._request("GET", f"/api/ResidentRequests/{request_id}/pre-verify")
+
+    async def get_resident_request_audit_logs(self, request_id: str) -> List[Dict]:
+        """Get approval/rejection audit logs for a resident request."""
+        return await self._request("GET", f"/api/ResidentRequests/{request_id}/audit-logs")
+
+    async def update_resident_request(
+        self,
+        request_id: str,
+        request_data_json: str,
+    ) -> Dict[str, Any]:
+        """Update resident request payload."""
+        return await self._request(
+            "PATCH",
+            f"/api/ResidentRequests/{request_id}",
+            json_data={"requestDataJson": request_data_json},
+        )
+
+    async def delete_resident_request(self, request_id: str) -> Dict[str, Any]:
+        """Delete a resident request."""
+        return await self._request("DELETE", f"/api/ResidentRequests/{request_id}")
+
     # ==================== Resident Registries (Admin/Waitlist) ====================
 
     async def get_resident_registries(self, status: Optional[str] = None) -> List[Dict]:
@@ -717,7 +1029,11 @@ class PulseClient:
         return await self._request("GET", "/api/ResidentRegistries", params=params)
 
     async def create_resident_registry(
-        self, phone_number: str, unit_id: str, full_name: Optional[str] = None
+        self,
+        phone_number: str,
+        unit_id: str,
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
     ) -> str:
         """Create a pre-approved resident registry entry (Admin).
 
@@ -735,8 +1051,14 @@ class PulseClient:
         }
         if full_name:
             payload["fullName"] = full_name
+        if email:
+            payload["email"] = email
 
         return await self._request("POST", "/api/ResidentRegistries", json_data=payload)
+
+    async def get_resident_registry(self, registry_id: str) -> Dict[str, Any]:
+        """Get resident registry entry by id."""
+        return await self._request("GET", f"/api/ResidentRegistries/{registry_id}")
 
     async def update_resident_registry_status(
         self, registry_id: str, status: str
@@ -755,6 +1077,22 @@ class PulseClient:
             f"/api/ResidentRegistries/{registry_id}/status",
             json_data={"status": status},
         )
+
+    async def bulk_update_resident_registry_status(
+        self,
+        registry_ids: List[str],
+        status: str,
+    ) -> Dict[str, Any]:
+        """Bulk update resident registry statuses."""
+        return await self._request(
+            "PUT",
+            "/api/ResidentRegistries/bulk/status",
+            json_data={"ids": registry_ids, "status": status},
+        )
+
+    async def delete_resident_registry(self, registry_id: str) -> Dict[str, Any]:
+        """Delete resident registry entry."""
+        return await self._request("DELETE", f"/api/ResidentRegistries/{registry_id}")
 
     async def request_resident_verification(
         self, unit_id: str, full_name: str, phone_number: str
@@ -778,29 +1116,208 @@ class PulseClient:
 
     # ==================== Units ====================
 
-    async def get_units(self) -> List[Dict]:
+    async def get_building_overview(self) -> Dict[str, Any]:
+        """Get building overview dashboard data."""
+        return await self._request("GET", "/api/Buildings/overview")
+
+    async def get_blocks(self) -> List[Dict]:
+        """Get all building blocks."""
+        return await self._request("GET", "/api/Blocks")
+
+    async def get_block_floors(self, block_id: str) -> List[Dict]:
+        """Get floors for a building block."""
+        return await self._request("GET", f"/api/Blocks/{block_id}/floors")
+
+    async def get_units(
+        self,
+        status: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
         """Get list of building units."""
-        return await self._request("GET", "/api/Units")
+        params: Dict[str, Any] = {"page": page, "pageSize": page_size}
+        if status:
+            params["status"] = status
+        return await self._request("GET", "/api/Units", params=params)
+
+    async def get_unit(self, unit_id: str) -> Dict[str, Any]:
+        """Get unit detail by id."""
+        return await self._request("GET", f"/api/Units/{unit_id}")
+
+    async def create_unit(
+        self,
+        unit_number: str,
+        floor_id: Optional[str] = None,
+        unit_type_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a building unit."""
+        return await self._request(
+            "POST",
+            "/api/Units",
+            json_data={
+                "unitNumber": unit_number,
+                "floorId": floor_id,
+                "unitTypeId": unit_type_id,
+            },
+        )
+
+    async def update_unit_status(self, unit_id: str, status: str) -> Dict[str, Any]:
+        """Update unit status."""
+        return await self._request(
+            "PUT",
+            f"/api/Units/{unit_id}/status",
+            json_data={"status": status},
+        )
+
+    async def get_resident_units(
+        self,
+        user_id: Optional[str] = None,
+        unit_id: Optional[str] = None,
+    ) -> List[Dict]:
+        """Get resident-unit mappings."""
+        params: Dict[str, Any] = {}
+        if user_id:
+            params["userId"] = user_id
+        if unit_id:
+            params["unitId"] = unit_id
+        return await self._request("GET", "/api/ResidentUnits", params=params)
+
+    async def assign_resident_to_unit(
+        self,
+        user_id: str,
+        unit_id: str,
+        relationship: str,
+        move_in_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Assign a resident to a unit."""
+        payload: Dict[str, Any] = {
+            "userId": user_id,
+            "unitId": unit_id,
+            "relationship": relationship,
+        }
+        if move_in_date:
+            payload["moveInDate"] = move_in_date
+        return await self._request("POST", "/api/ResidentUnits", json_data=payload)
+
+    # ==================== Access Cards ====================
+
+    async def get_access_cards(self, user_id: Optional[str] = None) -> List[Dict]:
+        """Get access cards for current scope or specific user."""
+        params: Dict[str, Any] = {}
+        if user_id:
+            params["userId"] = user_id
+        return await self._request("GET", "/api/AccessCards", params=params)
+
+    async def get_access_card(self, card_id: str) -> Dict[str, Any]:
+        """Get access card detail."""
+        return await self._request("GET", f"/api/AccessCards/{card_id}")
+
+    async def create_access_card(
+        self,
+        user_id: str,
+        card_number: str,
+        unit_id: Optional[str] = None,
+        relationship: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new access card."""
+        return await self._request(
+            "POST",
+            "/api/AccessCards",
+            json_data={
+                "userId": user_id,
+                "cardNumber": card_number,
+                "unitId": unit_id,
+                "relationship": relationship,
+            },
+        )
+
+    async def update_access_card_status(
+        self,
+        card_id: str,
+        status: str,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update access card status."""
+        payload: Dict[str, Any] = {"status": status}
+        if reason:
+            payload["reason"] = reason
+        return await self._request(
+            "PUT",
+            f"/api/AccessCards/{card_id}/status",
+            json_data=payload,
+        )
+
+    async def delete_access_card(self, card_id: str) -> Dict[str, Any]:
+        """Delete an access card."""
+        return await self._request("DELETE", f"/api/AccessCards/{card_id}")
+
+    # ==================== Community Events ====================
+
+    async def get_community_events(self, include_unpublished: bool = False) -> List[Dict]:
+        """Get community events."""
+        params = {"includeUnpublished": include_unpublished}
+        return await self._request("GET", "/api/CommunityEvents", params=params)
+
+    async def get_community_event(self, event_id: str) -> Dict[str, Any]:
+        """Get community event detail."""
+        return await self._request("GET", f"/api/CommunityEvents/{event_id}")
+
+    async def create_community_event(
+        self,
+        title: str,
+        description: str,
+        location: str,
+        start_at: str,
+        end_at: str,
+        capacity: int,
+        is_published: bool = True,
+    ) -> Dict[str, Any]:
+        """Create a community event."""
+        return await self._request(
+            "POST",
+            "/api/CommunityEvents",
+            json_data={
+                "createdBy": "00000000-0000-0000-0000-000000000000",
+                "title": title,
+                "description": description,
+                "location": location,
+                "startAt": start_at,
+                "endAt": end_at,
+                "capacity": capacity,
+                "isPublished": is_published,
+            },
+        )
+
+    async def register_community_event(self, event_id: str) -> Dict[str, Any]:
+        """Register current user for a community event."""
+        return await self._request("POST", f"/api/CommunityEvents/{event_id}/register")
 
     # ==================== Notifications ====================
 
     async def get_payment_history(
-        self, bill_id: Optional[str] = None
+        self,
+        bill_id: Optional[str] = None,
+        paid_by: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
     ) -> List[Dict]:
-        """Get payment history for current user.
+        """Get payment history for the current accessible scope.
 
         Args:
             bill_id: Filter by bill ID
+            paid_by: Filter by payer user ID
+            page: Page number
+            page_size: Page size
 
         Returns:
             List of payment records
         """
-        params = {}
+        params: Dict[str, Any] = {"page": page, "pageSize": page_size}
         if bill_id:
             params["billId"] = bill_id
-        return await self._request(
-            "GET", "/api/v1/resident/payments/history", params=params
-        )
+        if paid_by:
+            params["paidBy"] = paid_by
+        return await self._request("GET", "/api/Payments/history", params=params)
 
     async def get_notifications(self, unread_only: bool = False) -> List[Dict]:
         """Get user notifications.
@@ -846,7 +1363,112 @@ class PulseClient:
         """
         return await self._request("GET", "/api/Announcements")
 
+    async def get_announcement(self, announcement_id: str) -> Dict[str, Any]:
+        """Get announcement details by ID."""
+        return await self._request("GET", f"/api/Announcements/{announcement_id}")
+
+    async def create_announcement(
+        self,
+        title: str,
+        content: str,
+        priority: str = "Normal",
+    ) -> Dict[str, Any]:
+        """Create a new announcement (Admin)."""
+        return await self._request(
+            "POST",
+            "/api/Announcements",
+            json_data={
+                "createdBy": "00000000-0000-0000-0000-000000000000",
+                "title": title,
+                "content": content,
+                "priority": priority,
+            },
+        )
+
     # ==================== User Roles & Permissions ====================
+
+    async def get_users(self) -> List[Dict]:
+        """Get all users."""
+        return await self._request("GET", "/api/Users")
+
+    async def get_user(self, user_id: str) -> Dict[str, Any]:
+        """Get user detail by ID."""
+        return await self._request("GET", f"/api/Users/{user_id}")
+
+    async def get_user_overview(self) -> List[Dict]:
+        """Get user overview with roles and units."""
+        return await self._request("GET", "/api/Users/overview")
+
+    async def get_users_by_roles(self, roles: List[str]) -> List[Dict]:
+        """Get users filtered by role names."""
+        return await self._request(
+            "GET",
+            "/api/Users/by-roles",
+            params={"roles": ",".join(roles)},
+        )
+
+    async def create_privileged_user(
+        self,
+        full_name: str,
+        email: str,
+        password: str,
+        role_name: str,
+        phone_number: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create admin or staff account."""
+        return await self._request(
+            "POST",
+            "/api/Users/admin-create",
+            json_data={
+                "fullName": full_name,
+                "email": email,
+                "password": password,
+                "roleName": role_name,
+                "phoneNumber": phone_number,
+            },
+        )
+
+    async def create_resident_user(
+        self,
+        full_name: str,
+        email: str,
+        password: str,
+        phone_number: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create resident account."""
+        return await self._request(
+            "POST",
+            "/api/Users/resident-create",
+            json_data={
+                "fullName": full_name,
+                "email": email,
+                "password": password,
+                "phoneNumber": phone_number,
+            },
+        )
+
+    async def update_user_admin(
+        self,
+        user_id: str,
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update user fields from admin/staff scope."""
+        return await self._request(
+            "PUT",
+            f"/api/Users/{user_id}",
+            json_data={
+                "id": user_id,
+                "fullName": full_name,
+                "email": email,
+                "status": status,
+            },
+        )
+
+    async def deactivate_user(self, user_id: str) -> Dict[str, Any]:
+        """Deactivate user account."""
+        return await self._request("DELETE", f"/api/Users/{user_id}")
 
     async def get_user_roles(self, user_id: str) -> Dict[str, Any]:
         """Get user's roles and permissions.
@@ -865,7 +1487,46 @@ class PulseClient:
                 print(roles["effectiveCapabilities"])
         """
         logger.info("fetching_user_roles", user_id=user_id)
-        return await self._request("GET", f"/api/UserRoles/{user_id}")
+        return await self._request("GET", f"/api/Users/{user_id}/roles")
+
+    async def assign_user_role(self, user_id: str, role_id: str) -> Dict[str, Any]:
+        """Assign a role to a user."""
+        return await self._request("POST", f"/api/Users/{user_id}/roles/{role_id}")
+
+    async def remove_user_role(self, user_id: str, role_id: str) -> Dict[str, Any]:
+        """Remove a role from a user."""
+        return await self._request("DELETE", f"/api/Users/{user_id}/roles/{role_id}")
+
+    async def get_roles(self) -> List[Dict]:
+        """Get all roles."""
+        return await self._request("GET", "/api/Roles")
+
+    async def get_role_permissions(self, role_id: str) -> List[Dict]:
+        """Get permissions assigned to a role."""
+        return await self._request("GET", f"/api/Roles/{role_id}/permissions")
+
+    async def create_role(self, role_name: str, description: Optional[str] = None) -> Dict[str, Any]:
+        """Create a role."""
+        return await self._request(
+            "POST",
+            "/api/Roles",
+            json_data={"roleName": role_name, "description": description},
+        )
+
+    async def add_role_permission(self, role_id: str, permission_id: str) -> Dict[str, Any]:
+        """Add a permission to a role."""
+        return await self._request(
+            "POST",
+            f"/api/Roles/{role_id}/permissions",
+            json_data=permission_id,
+        )
+
+    async def remove_role_permission(self, role_id: str, permission_id: str) -> Dict[str, Any]:
+        """Remove a permission from a role."""
+        return await self._request(
+            "DELETE",
+            f"/api/Roles/{role_id}/permissions/{permission_id}",
+        )
 
     async def get_actions(self) -> Dict[str, Any]:
         """Get all available action definitions.
@@ -902,6 +1563,14 @@ class PulseClient:
         """
         logger.info("fetching_permissions")
         return await self._request("GET", "/api/Permissions")
+
+    async def create_permission(self, resource: str, action: str) -> Dict[str, Any]:
+        """Create a new permission."""
+        return await self._request(
+            "POST",
+            "/api/Permissions",
+            json_data={"resource": resource, "action": action},
+        )
 
 
 # Convenience function for quick usage

@@ -8,6 +8,7 @@ import structlog
 from resident_agent.schemas.auth_schemas import LoginRequest, TokenResponse
 from resident_agent.auth.jwt_handler import JWTHandler
 from resident_agent.auth.dependencies import get_current_user, get_pulse_token
+from resident_agent.auth.permission_mapper import PermissionMapper
 from resident_agent.core.config import Settings
 from resident_agent.clients.pulse_client import PulseClient, PulseConfig, PulseAPIError
 
@@ -46,6 +47,7 @@ async def login(request: LoginRequest) -> TokenResponse:
 
     try:
         async with PulseClient(pulse_config) as client:
+            permission_mapper = PermissionMapper()
             login_response = await client.login(
                 email=request.email,
                 password=request.password,
@@ -66,12 +68,10 @@ async def login(request: LoginRequest) -> TokenResponse:
                 logger.warning("permissions_fetch_failed", error=str(e))
                 # Continue without permissions - user will have basic access only
 
-            # If user is Admin, ensure they have wildcard permission for all tools
-            if login_response.role == "Admin":
-                logger.info("admin_role_detected_injecting_wildcard_permission")
-                # Check if wildcard already exists, if not add it
-                if not any(p.get("resource") == "*" for p in permissions):
-                    permissions.append({"resource": "*", "action": "*"})
+            permissions = permission_mapper.constrain_permissions_to_role(
+                login_response.role,
+                permissions,
+            )
 
             # Create Resident Agent JWT with user info
             jwt_handler = JWTHandler(settings)
