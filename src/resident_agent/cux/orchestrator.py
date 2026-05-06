@@ -31,6 +31,20 @@ from resident_agent.cux.state_manager import StateManager
 logger = structlog.get_logger()
 
 
+def _permission_strings(
+    permission_mapper: PermissionMapper,
+    permissions: Optional[List[Dict[str, Any]]],
+) -> List[str]:
+    normalized = permission_mapper.normalize_permissions(permissions or [])
+    result: List[str] = []
+    for p in normalized:
+        if p.get("resource") == "*":
+            result.append("ADMIN")
+        else:
+            result.append(f"{p.get('resource')}.{p.get('action')}")
+    return result
+
+
 def _load_prompts(path: str) -> Dict[str, str]:
     """Load system prompts from a YAML file.
 
@@ -135,7 +149,7 @@ class CuxOrchestrator:
         history = await self.state_manager.get_history_for_llm(session_id, limit=10)
 
         # Get user permissions
-        permissions = user.get("permissions", [])
+        permissions = self.permission_mapper.normalize_permissions(user.get("permissions", []))
 
         # Handle based on intent type
         if intent_type == "chitchat":
@@ -199,7 +213,7 @@ class CuxOrchestrator:
         # Get history
         history = await self.state_manager.get_history_for_llm(session_id, limit=10)
 
-        permissions = user.get("permissions", [])
+        permissions = self.permission_mapper.normalize_permissions(user.get("permissions", []))
 
         # Build messages for LLM
         messages = self._build_messages(history, message, attachments)
@@ -211,7 +225,7 @@ class CuxOrchestrator:
         system_prompt = self._prompts["stream"].format(
             user_name=user.get("name", "Cư dân"),
             unit=user.get("unit", "Resident"),
-            permissions=", ".join(f"{p['resource']}.{p['action']}" for p in permissions) if permissions else "basic",
+            permissions=", ".join(_permission_strings(self.permission_mapper, permissions)) if permissions else "basic",
         )
 
         messages.insert(0, {"role": "system", "content": system_prompt})
@@ -510,7 +524,7 @@ class CuxOrchestrator:
         system_prompt = self._prompts["agentic"].format(
             user_name=user.get("name", "Cư dân"),
             unit=user.get("unit", "Resident"),
-            permissions=", ".join(f"{p['resource']}.{p['action']}" for p in permissions) if permissions else "basic",
+            permissions=", ".join(_permission_strings(self.permission_mapper, permissions)) if permissions else "basic",
         )
 
         # Build messages
@@ -663,7 +677,7 @@ class CuxOrchestrator:
         Returns:
             ChatResponse
         """
-        permissions = user.get("permissions", [])
+        permissions = self.permission_mapper.normalize_permissions(user.get("permissions", []))
 
         # Use ActionGenerator to validate action and decide tool
         tool_decision = await self.action_generator.resolve_action(action, permissions)

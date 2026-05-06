@@ -9,6 +9,8 @@ import json
 from typing import List, Optional, Dict, Any
 import structlog
 
+from resident_agent.auth.permission_mapper import PermissionMapper
+
 logger = structlog.get_logger()
 
 
@@ -34,6 +36,7 @@ class ActionGenerator:
         self.prompts = prompts or {}
         self.tool_permissions = tool_permissions or {}
         self.model = model or "gemini-2.5-flash"
+        self.permission_mapper = PermissionMapper()
 
     async def resolve_action(
         self,
@@ -51,6 +54,8 @@ class ActionGenerator:
         """
         if not self.openai_client:
             return self._fallback_resolve_action(action, permissions)
+
+        permissions = self.permission_mapper.normalize_permissions(permissions)
 
         # Build permission string
         perm_list = []
@@ -94,6 +99,8 @@ class ActionGenerator:
 
     def _fallback_resolve_action(self, action: str, permissions: List[Dict[str, str]]) -> Dict[str, Any]:
         """Fallback action resolution without LLM."""
+        permissions = self.permission_mapper.normalize_permissions(permissions)
+
         # Check for admin permission
         for p in permissions:
             if p.get("resource") == "*":
@@ -292,6 +299,8 @@ class ActionGenerator:
         """
         if not self.openai_client:
             return self._fallback_actions()
+
+        permissions = self.permission_mapper.normalize_permissions(permissions)
 
         # Build permission string
         perm_str = "No permissions"

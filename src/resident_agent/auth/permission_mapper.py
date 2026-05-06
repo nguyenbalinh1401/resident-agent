@@ -7,7 +7,7 @@ Loads configuration from YAML and provides:
 - Tool permission validation
 """
 
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Any
 from pathlib import Path
 import yaml
 import structlog
@@ -41,6 +41,43 @@ class PermissionMapper:
         self._config = self._load_config()
         logger.info("permission_mapper_reloaded")
 
+    def normalize_permissions(
+        self,
+        permissions: Optional[List[Any]],
+    ) -> List[Dict[str, str]]:
+        """Normalize legacy or malformed permission payloads.
+
+        Accepts:
+        - [{"resource":"Bills","action":"Read"}]
+        - ["Bills.Read", "Payments.Write"]
+        - mixed lists
+        """
+        if not permissions:
+            return []
+
+        normalized: List[Dict[str, str]] = []
+        for item in permissions:
+            if isinstance(item, dict):
+                resource = item.get("resource")
+                action = item.get("action")
+                if isinstance(resource, str) and isinstance(action, str):
+                    normalized.append({"resource": resource, "action": action})
+                continue
+
+            if isinstance(item, str):
+                raw = item.strip()
+                if not raw:
+                    continue
+                if raw == "*":
+                    normalized.append({"resource": "*", "action": "*"})
+                    continue
+                if "." in raw:
+                    resource, action = raw.split(".", 1)
+                    if resource and action:
+                        normalized.append({"resource": resource, "action": action})
+
+        return normalized
+
     def permissions_to_tools(
         self,
         permissions: List[Dict[str, str]],
@@ -53,6 +90,8 @@ class PermissionMapper:
         Returns:
             List of tool names the user can use, or ["*"] for admin access
         """
+        permissions = self.normalize_permissions(permissions)
+
         if not permissions:
             return self._config.get("default_tools", ["get_profile"])
 
@@ -137,6 +176,7 @@ class PermissionMapper:
         the upstream permissions endpoint returns a broader permission catalog.
         """
         preset = self.get_role_permission_preset(role)
+        permissions = self.normalize_permissions(permissions)
         if not preset:
             return permissions
 
@@ -195,6 +235,7 @@ class PermissionMapper:
         Returns:
             True if user can use the tool
         """
+        user_permissions = self.normalize_permissions(user_permissions)
         required = self.get_tool_permission(tool_name)
 
         # No permission required for this tool
