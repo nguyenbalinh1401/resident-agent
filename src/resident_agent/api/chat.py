@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 import uuid
 from fastapi import APIRouter, Depends, Header
 import structlog
+from openai import BadRequestError
 
 from resident_agent.schemas.chat_schemas import ChatRequest, ChatResponse
 from resident_agent.auth.dependencies import get_current_user, get_pulse_client
@@ -15,6 +16,25 @@ from resident_agent.clients.pulse_client import PulseClient
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+def _provider_error_message(error: Exception) -> Optional[str]:
+    text = str(error)
+    lowered = text.lower()
+
+    if "api key expired" in lowered or "api_key_invalid" in lowered:
+        return (
+            "Dich vu AI tam thoi chua san sang do khoa API da het han hoac khong hop le. "
+            "Vui long cap nhat API key tren server Agent."
+        )
+
+    if "user location is not supported" in lowered or "failed_precondition" in lowered:
+        return (
+            "Dich vu AI hien dang bi chan theo khu vuc cua nha cung cap. "
+            "Vui long doi provider ho tro hoac cap nhat cau hinh server Agent."
+        )
+
+    return None
 
 
 @router.post(
@@ -52,15 +72,48 @@ async def chat(
     settings = Settings.get()
     orchestrator = CuxOrchestrator(settings)
 
-    # Process message with injected PulseClient
-    response = await orchestrator.process(
-        message=request.message,
-        session_id=session_id,
-        user=user,
-        pulse_client=pulse_client,
-        intent_type=request.intent_type or "agentic_flow",
-        attachments=request.attachments,
-    )
+    try:
+        # Process message with injected PulseClient
+        response = await orchestrator.process(
+            message=request.message,
+            session_id=session_id,
+            user=user,
+            pulse_client=pulse_client,
+            intent_type=request.intent_type or "agentic_flow",
+            attachments=request.attachments,
+        )
+    except BadRequestError as e:
+        friendly = _provider_error_message(e) or (
+            "Dich vu AI tam thoi gap loi khi xu ly yeu cau. Vui long thu lai sau."
+        )
+        logger.warning(
+            "chat_provider_error",
+            session_id=session_id,
+            user_id=user.get("sub"),
+            error=str(e),
+        )
+        return ChatResponse(
+            message=friendly,
+            actions=[],
+            session_id=session_id,
+            tool_calls=[],
+            intent=request.intent_type or "agentic_flow",
+        )
+    except Exception as e:
+        logger.error(
+            "chat_unhandled_error",
+            session_id=session_id,
+            user_id=user.get("sub"),
+            error=str(e),
+            exc_info=True,
+        )
+        return ChatResponse(
+            message="Dich vu AI tam thoi gap loi khi xu ly yeu cau. Vui long thu lai sau.",
+            actions=[],
+            session_id=session_id,
+            tool_calls=[],
+            intent=request.intent_type or "agentic_flow",
+        )
 
     logger.info(
         "chat_response",
@@ -118,15 +171,50 @@ async def execute_action(
     settings = Settings.get()
     orchestrator = CuxOrchestrator(settings)
 
-    # Process as tool_call intent with injected PulseClient
-    response = await orchestrator.process(
-        message=request.message or f"Execute action: {action}",
-        session_id=session_id,
-        user=user,
-        pulse_client=pulse_client,
-        intent_type="tool_call",
-        attachments=request.attachments,
-    )
+    try:
+        # Process as tool_call intent with injected PulseClient
+        response = await orchestrator.process(
+            message=request.message or f"Execute action: {action}",
+            session_id=session_id,
+            user=user,
+            pulse_client=pulse_client,
+            intent_type="tool_call",
+            attachments=request.attachments,
+        )
+    except BadRequestError as e:
+        friendly = _provider_error_message(e) or (
+            "Dich vu AI tam thoi chua the thuc hien hanh dong nay. Vui long thu lai sau."
+        )
+        logger.warning(
+            "action_provider_error",
+            session_id=session_id,
+            user_id=user.get("sub"),
+            action=action,
+            error=str(e),
+        )
+        return ChatResponse(
+            message=friendly,
+            actions=[],
+            session_id=session_id,
+            tool_calls=[],
+            intent="tool_call",
+        )
+    except Exception as e:
+        logger.error(
+            "action_unhandled_error",
+            session_id=session_id,
+            user_id=user.get("sub"),
+            action=action,
+            error=str(e),
+            exc_info=True,
+        )
+        return ChatResponse(
+            message="Dich vu AI tam thoi chua the thuc hien hanh dong nay. Vui long thu lai sau.",
+            actions=[],
+            session_id=session_id,
+            tool_calls=[],
+            intent="tool_call",
+        )
 
     OpsStore.create().upsert_session(
         user=user,
