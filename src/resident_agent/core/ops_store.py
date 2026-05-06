@@ -108,6 +108,15 @@ class OpsStore:
         filtered = [item for item in sessions if item.get("user_id") == user_id]
         return sorted(filtered, key=lambda item: item.get("updated_at", ""), reverse=True)
 
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        sessions = self._read_json_list(self.sessions_path)
+        return next((item for item in sessions if item.get("id") == session_id), None)
+
+    def get_session_owner(self, session_id: str) -> Optional[str]:
+        session = self.get_session(session_id)
+        owner = session.get("user_id") if session else None
+        return str(owner) if owner else None
+
     def upsert_session(
         self,
         user: Dict[str, Any],
@@ -130,6 +139,17 @@ class OpsStore:
                 "status": "Active",
             }
             sessions.append(existing)
+        else:
+            existing_owner = existing.get("user_id")
+            current_user_id = user.get("sub")
+            if existing_owner and existing_owner != current_user_id:
+                raise PermissionError(
+                    f"Session {session_id} belongs to another user."
+                )
+            if not existing_owner:
+                existing["user_id"] = current_user_id
+                existing["user_name"] = user.get("name")
+                existing["phone_number"] = user.get("phone_number")
 
         existing["title"] = (user_message.strip() or "Resident chat")[:80]
         existing["last_user_message"] = user_message.strip()

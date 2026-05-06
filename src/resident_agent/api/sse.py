@@ -9,11 +9,43 @@ import structlog
 from resident_agent.auth.dependencies import get_current_user, get_pulse_client
 from resident_agent.cux.orchestrator import CuxOrchestrator
 from resident_agent.core.config import Settings
+from resident_agent.core.ops_store import OpsStore
 from resident_agent.clients.pulse_client import PulseClient
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+def _resolve_stream_session_id(
+    requested_session_id: Optional[str],
+    user: Dict[str, Any],
+) -> str:
+    if not requested_session_id:
+        return str(uuid.uuid4())
+
+    store = OpsStore.create()
+    owner = store.get_session_owner(requested_session_id)
+    current_user_id = str(user.get("sub") or "")
+
+    if owner == current_user_id:
+        return requested_session_id
+
+    if owner and owner != current_user_id:
+        logger.warning(
+            "stream_session_owner_mismatch_regenerated",
+            requested_session_id=requested_session_id,
+            owner=owner,
+            current_user_id=current_user_id,
+        )
+        return str(uuid.uuid4())
+
+    logger.info(
+        "stream_session_owner_missing_regenerated",
+        requested_session_id=requested_session_id,
+        current_user_id=current_user_id,
+    )
+    return str(uuid.uuid4())
 
 
 @router.get(
@@ -49,7 +81,7 @@ async def chat_stream(
         StreamingResponse with SSE events
     """
     # Generate session_id if not provided
-    session_id = session_id or str(uuid.uuid4())
+    session_id = _resolve_stream_session_id(session_id, user)
 
     logger.info(
         "chat_stream_request",

@@ -37,6 +37,39 @@ def _provider_error_message(error: Exception) -> Optional[str]:
     return None
 
 
+def _resolve_session_id(
+    requested_session_id: Optional[str],
+    user: Dict[str, Any],
+) -> str:
+    if not requested_session_id:
+        return str(uuid.uuid4())
+
+    store = OpsStore.create()
+    owner = store.get_session_owner(requested_session_id)
+    current_user_id = str(user.get("sub") or "")
+
+    if owner == current_user_id:
+        return requested_session_id
+
+    if owner and owner != current_user_id:
+        logger.warning(
+            "session_owner_mismatch_regenerated",
+            requested_session_id=requested_session_id,
+            owner=owner,
+            current_user_id=current_user_id,
+        )
+        return str(uuid.uuid4())
+
+    # Unknown or legacy session without a persisted owner:
+    # regenerate to prevent cross-user reuse via stale client state.
+    logger.info(
+        "session_owner_missing_regenerated",
+        requested_session_id=requested_session_id,
+        current_user_id=current_user_id,
+    )
+    return str(uuid.uuid4())
+
+
 @router.post(
     "",
     response_model=ChatResponse,
@@ -59,7 +92,7 @@ async def chat(
         ChatResponse with message, actions, and session_id
     """
     # Generate session_id if not provided
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = _resolve_session_id(request.session_id, user)
 
     logger.info(
         "chat_request",
@@ -157,7 +190,7 @@ async def execute_action(
     Returns:
         ChatResponse with action results
     """
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = _resolve_session_id(request.session_id, user)
     action = request.action or request.message
 
     logger.info(
