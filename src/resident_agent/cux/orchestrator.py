@@ -31,6 +31,17 @@ from resident_agent.cux.state_manager import StateManager
 logger = structlog.get_logger()
 
 
+def _attachment_value(att: Any, key: str) -> Any:
+    """Read attachment data from either dicts or Pydantic-style objects."""
+    if isinstance(att, dict):
+        return att.get(key)
+    return getattr(att, key, None)
+
+
+def _attachment_is_image(att: Any) -> bool:
+    return str(_attachment_value(att, "type") or "").lower() == "image"
+
+
 def _permission_strings(
     permission_mapper: PermissionMapper,
     permissions: Optional[List[Dict[str, Any]]],
@@ -115,7 +126,7 @@ class CuxOrchestrator:
         user: Dict[str, Any],
         pulse_client: Optional[PulseClient] = None,
         intent_type: str = "agentic_flow",
-        attachments: Optional[List[Dict]] = None,
+        attachments: Optional[List[Any]] = None,
     ) -> ChatResponse:
         """Process a user message and return response.
 
@@ -181,7 +192,7 @@ class CuxOrchestrator:
         user: Dict[str, Any],
         pulse_client: Optional[PulseClient] = None,
         intent_type: str = "agentic_flow",
-        attachments: Optional[List[Dict]] = None,
+        attachments: Optional[List[Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """Process a user message with streaming response.
 
@@ -504,7 +515,7 @@ class CuxOrchestrator:
         pulse_client: Optional[PulseClient],
         permissions: List[Dict[str, str]],
         history: List[Dict[str, str]],
-        attachments: Optional[List[Dict]],
+        attachments: Optional[List[Any]],
     ) -> ChatResponse:
         """Handle agentic flow with tool calling.
 
@@ -538,12 +549,16 @@ class CuxOrchestrator:
             user_message["content"].append({"type": "text", "text": message})
 
             for att in attachments:
-                if att.get("type") == "image":
+                if _attachment_is_image(att):
+                    mime_type = _attachment_value(att, "mime_type")
+                    data = _attachment_value(att, "data")
+                    if not mime_type or not data:
+                        continue
                     user_message["content"].append(
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:{att['mime_type']};base64,{att['data']}"
+                                "url": f"data:{mime_type};base64,{data}"
                             },
                         }
                     )
@@ -774,7 +789,7 @@ class CuxOrchestrator:
         self,
         history: List[Dict[str, str]],
         message: str,
-        attachments: Optional[List[Dict]] = None,
+        attachments: Optional[List[Any]] = None,
     ) -> List[Dict]:
         """Build messages list for LLM.
 
@@ -792,12 +807,16 @@ class CuxOrchestrator:
         if attachments and messages and messages[-1].get("role") == "user":
             content = [{"type": "text", "text": message}]
             for att in attachments:
-                if att.get("type") == "image" and att.get("data"):
+                if _attachment_is_image(att) and _attachment_value(att, "data"):
+                    mime_type = _attachment_value(att, "mime_type")
+                    data = _attachment_value(att, "data")
+                    if not mime_type or not data:
+                        continue
                     content.append(
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:{att['mime_type']};base64,{att['data']}"
+                                "url": f"data:{mime_type};base64,{data}"
                             },
                         }
                     )
