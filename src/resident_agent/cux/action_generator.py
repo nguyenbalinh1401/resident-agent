@@ -247,10 +247,11 @@ class ActionGenerator:
             Formatted markdown string in Vietnamese
         """
         if not self.openai_client:
-            return self._simple_format_result(tool_name, result)
+            return self._simple_format_result(tool_name, self._sanitize_for_display(result))
 
         prompt_template = self.prompts.get("result_formatter", _DEFAULT_RESULT_FORMATTER_PROMPT)
-        result_str = json.dumps(result, ensure_ascii=False, indent=2)
+        sanitized_result = self._sanitize_for_display(result)
+        result_str = json.dumps(sanitized_result, ensure_ascii=False, indent=2)
         prompt = prompt_template.format(action=action, tool_name=tool_name, result=result_str)
 
         try:
@@ -263,7 +264,7 @@ class ActionGenerator:
 
         except Exception as e:
             logger.error("llm_format_failed", tool=tool_name, error=str(e))
-            return self._simple_format_result(tool_name, result)
+            return self._simple_format_result(tool_name, sanitized_result)
 
     def _simple_format_result(self, tool_name: str, result: Any) -> str:
         """Simple fallback formatter."""
@@ -280,6 +281,44 @@ class ActionGenerator:
             return f"## Kết quả\n\nTìm thấy **{len(result)}** mục."
 
         return str(result)
+
+    def _sanitize_for_display(self, value: Any) -> Any:
+        """Remove internal identifiers before sending results to user-facing formatting."""
+        if isinstance(value, list):
+            return [self._sanitize_for_display(item) for item in value]
+
+        if isinstance(value, dict):
+            sanitized = {}
+            for key, item in value.items():
+                if self._should_hide_display_key(str(key)):
+                    continue
+                sanitized[key] = self._sanitize_for_display(item)
+            return sanitized
+
+        return value
+
+    @staticmethod
+    def _should_hide_display_key(key: str) -> bool:
+        normalized = key.strip().lower()
+        if normalized in {
+            "id",
+            "userid",
+            "unitid",
+            "residentid",
+            "amenityid",
+            "bookingid",
+            "requestid",
+            "ticketid",
+            "packageid",
+            "parcelid",
+            "notificationid",
+            "publicid",
+            "public_id",
+            "internalid",
+        }:
+            return True
+
+        return normalized.endswith("id") or normalized.endswith("_id")
 
     async def generate_actions(
         self,
@@ -377,7 +416,8 @@ Requirements:
 - Use markdown formatting (headers, tables, lists)
 - If result is a list, show as formatted table
 - Keep it concise but informative
-- Do not include raw JSON"""
+- Do not include raw JSON
+- Never expose internal IDs, UUIDs, public IDs, database keys, or backend-only identifiers"""
 
 _DEFAULT_ACTION_SUGGESTER_PROMPT = """You are a smart action suggester for a Vietnamese resident services app.
 
