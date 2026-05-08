@@ -156,6 +156,30 @@ class PulseClient:
 
         return None
 
+    async def _get_current_active_unit_id(self) -> Optional[str]:
+        """Resolve the current user's active unit ID for resident-only actions."""
+        try:
+            my_unit = await self._request("GET", "/api/v1/resident/my-unit")
+        except PulseAPIError:
+            return None
+
+        if isinstance(my_unit, dict):
+            unit_id = my_unit.get("unitId") or my_unit.get("id")
+            if unit_id:
+                return str(unit_id)
+
+        return None
+
+    async def _is_privileged_user(self) -> bool:
+        """Best-effort check for admin/staff/manager scopes."""
+        try:
+            current_user = await self.get_current_user()
+        except PulseAPIError:
+            return False
+
+        role = str(current_user.get("role") or "").strip().lower()
+        return role in {"admin", "staff", "manager"}
+
     async def _request(
         self,
         method: str,
@@ -332,7 +356,8 @@ class PulseClient:
         if status:
             params["status"] = status
 
-        return await self._request("GET", "/api/Bills", params=params)
+        endpoint = "/api/Bills" if await self._is_privileged_user() else "/api/v1/resident/bills"
+        return await self._request("GET", endpoint, params=params)
 
     async def get_bill(self, bill_id: str) -> Dict[str, Any]:
         """Get bill details by ID.
@@ -343,7 +368,8 @@ class PulseClient:
         Returns:
             Bill details including line items
         """
-        return await self._request("GET", f"/api/Bills/{bill_id}")
+        endpoint = f"/api/Bills/{bill_id}" if await self._is_privileged_user() else f"/api/v1/resident/bills/{bill_id}"
+        return await self._request("GET", endpoint)
 
     async def create_bill(
         self, unit_id: str, billing_month: str, due_date: str, details: List[Dict]
@@ -513,6 +539,22 @@ class PulseClient:
 
         return await self._request("GET", "/api/Tickets", params=params)
 
+    async def get_my_incidents(
+        self,
+        status: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> List[Dict]:
+        """Get incidents for the current resident only."""
+        params: Dict[str, Any] = {"page": page, "pageSize": page_size}
+        if status:
+            params["status"] = status
+        return await self._request("GET", "/api/v1/resident/incidents", params=params)
+
+    async def get_my_incident(self, ticket_id: str) -> Dict[str, Any]:
+        """Get a resident-scoped incident detail."""
+        return await self._request("GET", f"/api/v1/resident/incidents/{ticket_id}")
+
     async def get_ticket(self, ticket_id: str) -> Dict[str, Any]:
         """Get ticket details.
 
@@ -629,6 +671,13 @@ class PulseClient:
             List of packages
         """
         params: Dict[str, Any] = {"page": page, "pageSize": page_size}
+        if not owner_id and not resident_id and not await self._is_privileged_user():
+            current_user = await self.get_current_user()
+            resident_id = str(
+                current_user.get("userId")
+                or current_user.get("id")
+                or ""
+            ) or None
         if unit_id:
             params["unitId"] = unit_id
         if status:
@@ -717,7 +766,7 @@ class PulseClient:
         if category_id:
             params["categoryId"] = category_id
 
-        return await self._request("GET", "/api/Amenities", params=params)
+        return await self._request("GET", "/api/v1/resident/amenities", params=params)
 
     async def get_amenity(self, amenity_id: str) -> Dict[str, Any]:
         """Get amenity details including availability.
@@ -998,9 +1047,9 @@ class PulseClient:
 
     async def create_resident_request(
         self,
-        requester_id: str,
         request_type_id: str,
         request_data_json: str,
+        requester_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a resident request."""
         return await self._request(
@@ -1162,6 +1211,45 @@ class PulseClient:
             "phoneNumber": phone_number,
         }
         return await self._request("POST", "/api/Users/request-resident", json_data=payload)
+
+    async def register_visitor(
+        self,
+        visitor_name: str,
+        visit_date: str,
+        visitor_phone: Optional[str] = None,
+        purpose: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Register a visitor for the caller's active unit.
+
+        The current backend visitor flow persists visitor name and expected
+        arrival only. Optional phone/purpose are appended for operator context.
+        """
+        unit_id = await self._get_current_active_unit_id()
+        if not unit_id:
+            raise PulseAPIError(
+                "Unable to determine an active unit for visitor registration.",
+                status_code=400,
+            )
+
+        extras: List[str] = []
+        if visitor_phone:
+            extras.append(f"SĐT: {visitor_phone.strip()}")
+        if purpose:
+            extras.append(f"Mục đích: {purpose.strip()}")
+
+        display_name = visitor_name.strip()
+        if extras:
+            display_name = f"{display_name} ({' | '.join(extras)})"
+
+        return await self._request(
+            "POST",
+            "/api/VisitorRegistrations",
+            json_data={
+                "unitId": unit_id,
+                "visitorName": display_name,
+                "expectedArrival": f"{visit_date}T09:00:00",
+            },
+        )
 
     # ==================== Units ====================
 
@@ -1366,7 +1454,8 @@ class PulseClient:
             params["billId"] = bill_id
         if paid_by:
             params["paidBy"] = paid_by
-        return await self._request("GET", "/api/Payments/history", params=params)
+        endpoint = "/api/Payments/history" if await self._is_privileged_user() else "/api/v1/resident/payments/history"
+        return await self._request("GET", endpoint, params=params)
 
     async def get_notifications(self, unread_only: bool = False) -> List[Dict]:
         """Get user notifications.
@@ -1377,8 +1466,8 @@ class PulseClient:
         Returns:
             List of notifications
         """
-        params = {"unreadOnly": unread_only} if unread_only else {}
-        return await self._request("GET", "/api/Notifications", params=params)
+        params = {"isRead": False} if unread_only else {}
+        return await self._request("GET", "/api/v1/resident/notifications", params=params)
 
     async def mark_notification_read(self, notification_id: str) -> Dict[str, Any]:
         """Mark notification as read.
@@ -1389,7 +1478,7 @@ class PulseClient:
         Returns:
             Result
         """
-        return await self._request("PUT", f"/api/Notifications/{notification_id}/read")
+        return await self._request("PUT", f"/api/v1/resident/notifications/{notification_id}/read")
 
     async def mark_all_notifications_read(self) -> Dict[str, Any]:
         """Mark all notifications as read."""
@@ -1397,7 +1486,8 @@ class PulseClient:
 
     async def get_unread_notification_count(self) -> Dict[str, Any]:
         """Get count of unread notifications."""
-        return await self._request("GET", "/api/Notifications/unread-count")
+        notifications = await self.get_notifications(unread_only=True)
+        return {"count": len(notifications)}
 
     # ==================== Announcements ====================
 

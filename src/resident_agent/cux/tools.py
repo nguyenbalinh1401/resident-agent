@@ -53,7 +53,9 @@ def _wrap_result(result: Union[Dict, List, Any]) -> Dict[str, Any]:
     """
     if isinstance(result, list):
         return {"data": result}
-    return result
+    if not isinstance(result, dict):
+        return {"value": result}
+    return _wrap_result(result)
 
 # Tool definitions following OpenAI's function calling format
 TOOLS = [
@@ -861,8 +863,9 @@ TOOLS = [
                     "package_id": {"type": "string", "description": "ID bưu kiện"},
                     "delegate_name": {"type": "string", "description": "Tên người nhận ủy quyền"},
                     "delegate_phone": {"type": "string", "description": "Số điện thoại người nhận ủy quyền"},
+                    "delegatee_id": {"type": "string", "description": "Resident user ID to receive the delegation"},
                 },
-                "required": ["package_id", "delegate_name", "delegate_phone"],
+                "required": ["package_id", "delegatee_id"],
             },
         },
     },
@@ -890,6 +893,7 @@ TOOLS = [
                 "properties": {
                     "package_id": {"type": "string", "description": "ID bưu kiện"},
                     "delegatee_id": {"type": "string", "description": "ID user của người được ủy quyền"},
+                    "delegatee_id": {"type": "string", "description": "Resident user ID to receive the delegation"},
                 },
                 "required": ["package_id", "delegatee_id"],
             },
@@ -1193,7 +1197,7 @@ TOOLS = [
                     "request_type_id": {"type": "string", "description": "ID loại yêu cầu"},
                     "request_data_json": {"type": "string", "description": "Payload JSON dạng chuỗi"}
                 },
-                "required": ["requester_id", "request_type_id", "request_data_json"]
+                "required": ["request_type_id", "request_data_json"]
             }
         }
     },
@@ -1956,10 +1960,10 @@ async def execute_tool(
             result = await pulse_client.create_ticket(**params)
 
         elif tool_name == "get_my_incidents":
-            result = _wrap_result(await pulse_client.get_tickets(**params))
+            result = _wrap_result(await pulse_client.get_my_incidents(**params))
 
         elif tool_name == "get_incident_detail":
-            result = await pulse_client.get_ticket(params["ticket_id"])
+            result = await pulse_client.get_my_incident(params["ticket_id"])
 
         elif tool_name == "get_tickets_queue":
             result = _wrap_result(await pulse_client.get_tickets(**params))
@@ -2006,9 +2010,15 @@ async def execute_tool(
             result = await pulse_client.get_package(params["package_id"])
 
         elif tool_name == "delegate_pickup":
+            delegatee_id = params.get("delegatee_id")
+            if not delegatee_id:
+                raise ValueError(
+                    "delegate_pickup now requires delegatee_id. "
+                    "Use lookup_parcel_resident first to find the resident user ID."
+                )
             result = await pulse_client.delegate_pickup(
                 parcel_id=params["package_id"],
-                delegatee_id=params["delegatee_id"],
+                delegatee_id=delegatee_id,
             )
 
         elif tool_name == "revoke_pickup_delegation":
