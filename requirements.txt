@@ -14,6 +14,7 @@ pydantic[email]
 
 # HTTP Client
 httpx>=0.25.0
+google-auth>=2.35.0
 
 # Redis (for conversation state)
 redis>=5.0.0

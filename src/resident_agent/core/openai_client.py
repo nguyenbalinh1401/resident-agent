@@ -5,6 +5,7 @@ import structlog
 from openai import AsyncOpenAI
 
 from resident_agent.core.config import Settings
+from resident_agent.core.llm_client_factory import build_openai_client_kwargs
 
 logger = structlog.get_logger()
 
@@ -38,11 +39,7 @@ class OpenAIClient:
 
     async def __aenter__(self) -> "OpenAIClient":
         """Async context manager entry."""
-        client_kwargs = {"api_key": self.settings.openai_api_key}
-
-        if self.settings.openai_api_base_url:
-            client_kwargs["base_url"] = self.settings.openai_api_base_url
-
+        client_kwargs = build_openai_client_kwargs(self.settings)
         self._client = AsyncOpenAI(**client_kwargs)
         return self
 

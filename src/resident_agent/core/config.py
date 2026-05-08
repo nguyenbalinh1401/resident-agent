@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     openai_model: str = Field(default=None, alias="OPENAI_MODEL")
     openai_max_tokens: int = Field(default=1000, alias="OPENAI_MAX_TOKENS")
     openai_temperature: float = Field(default=0.3, alias="OPENAI_TEMPERATURE")
+    vertex_ai_enabled: bool = Field(default=False, alias="VERTEX_AI_ENABLED")
+    vertex_project_id: Optional[str] = Field(default=None, alias="VERTEX_PROJECT_ID")
+    vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
+    vertex_service_account_json: Optional[str] = Field(
+        default=None,
+        alias="VERTEX_SERVICE_ACCOUNT_JSON",
+    )
 
     # JWT
     jwt_secret_key: str = Field(default="your-secret-key-here-change-in-production", alias="JWT_SECRET_KEY")
@@ -109,6 +116,9 @@ class Settings(BaseSettings):
             kwargs.setdefault("openai_model", openai.get("model"))
             kwargs.setdefault("openai_max_tokens", openai.get("max_tokens"))
             kwargs.setdefault("openai_temperature", openai.get("temperature"))
+            kwargs.setdefault("vertex_ai_enabled", openai.get("vertex_ai_enabled"))
+            kwargs.setdefault("vertex_project_id", openai.get("vertex_project_id"))
+            kwargs.setdefault("vertex_location", openai.get("vertex_location"))
 
         # JWT
         if "jwt" in yaml_config:

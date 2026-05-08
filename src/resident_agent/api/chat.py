@@ -34,6 +34,12 @@ def _provider_error_message(error: Exception) -> Optional[str]:
             "Vui long doi provider ho tro hoac cap nhat cau hinh server Agent."
         )
 
+    if "permission_denied" in lowered or "denied access" in lowered:
+        return (
+            "Dich vu AI dang bi tu choi quyen truy cap. "
+            "Vui long kiem tra Vertex AI API, billing va role Vertex AI User cho service account."
+        )
+
     return None
 
 

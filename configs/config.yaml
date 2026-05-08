@@ -18,6 +18,9 @@ openai:
   model: "gpt-4o-mini"
   max_tokens: 1000
   temperature: 0.3
+  vertex_ai_enabled: false
+  vertex_project_id: null
+  vertex_location: "global"
 
 # JWT Authentication
 jwt:

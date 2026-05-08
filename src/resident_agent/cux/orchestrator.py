@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 
 from resident_agent.core.config import Settings
 from resident_agent.core.openai_client import OpenAIClient
+from resident_agent.core.llm_client_factory import build_openai_client_kwargs
 from resident_agent.clients.pulse_client import PulseClient
 from resident_agent.schemas.chat_schemas import (
     ChatResponse,
@@ -103,10 +104,9 @@ class CuxOrchestrator:
         self._prompts = _load_prompts(self.settings.prompts_path)
 
         # Create AsyncOpenAI client for ActionGenerator
-        client_kwargs = {"api_key": self.settings.openai_api_key}
-        if self.settings.openai_api_base_url:
-            client_kwargs["base_url"] = self.settings.openai_api_base_url
-        self._openai_client = AsyncOpenAI(**client_kwargs)
+        self._openai_client = AsyncOpenAI(
+            **build_openai_client_kwargs(self.settings)
+        )
 
         # Get tool_permissions from PermissionMapper config
         tool_permissions = self.permission_mapper._config.get("tool_to_permission", {})
