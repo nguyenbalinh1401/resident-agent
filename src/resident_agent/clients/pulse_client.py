@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 import httpx
 import structlog
+import re
 
 logger = structlog.get_logger()
 
@@ -116,6 +117,44 @@ class PulseClient:
         self.config.token = token
         if self._client:
             self._client.headers["Authorization"] = f"Bearer {token}"
+
+    @staticmethod
+    def _is_guid(value: Optional[str]) -> bool:
+        if not value:
+            return False
+        return bool(
+            re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                value.strip(),
+            )
+        )
+
+    async def _resolve_ticket_category_name(self, category_identifier: Optional[str]) -> Optional[str]:
+        if not category_identifier:
+            return None
+
+        categories = await self.get_ticket_categories()
+        normalized_identifier = category_identifier.strip().lower()
+
+        for category in categories:
+            category_id = str(category.get("id") or "")
+            category_name = str(
+                category.get("name")
+                or category.get("categoryName")
+                or category.get("title")
+                or ""
+            ).strip()
+
+            if category_id and category_id == category_identifier:
+                return category_name or None
+
+            if category_name and category_name.lower() == normalized_identifier:
+                return category_name
+
+        if not self._is_guid(category_identifier):
+            return category_identifier.strip()
+
+        return None
 
     async def _request(
         self,
@@ -428,18 +467,17 @@ class PulseClient:
         Returns:
             Created ticket details
         """
-        payload = {
-            "categoryId": category_id,
-            "description": description
-        }
-        if unit_id:
-            payload["unitId"] = unit_id
-        if severity:
-            payload["severity"] = severity
-        if images:
-            payload["images"] = images
+        category_name = await self._resolve_ticket_category_name(category_id)
 
-        return await self._request("POST", "/api/Tickets", json_data=payload)
+        payload = {
+            "description": description,
+            "imageUrls": images or [],
+            "unitId": unit_id,
+            "categoryName": category_name,
+            "severity": severity,
+        }
+
+        return await self._request("POST", "/api/v1/resident/incidents", json_data=payload)
 
     async def get_tickets(
         self,
@@ -771,9 +809,16 @@ class PulseClient:
         Returns:
             Booking details
         """
+        if not self._is_guid(amenity_id):
+            raise PulseAPIError(
+                "Amenity ID is invalid for the current Pulse system. Fetch amenities again before booking.",
+                status_code=400,
+                details={"amenityId": amenity_id},
+            )
+
         return await self._request(
             "POST",
-            "/api/Bookings",
+            "/api/v1/resident/bookings",
             json_data={
                 "amenityId": amenity_id,
                 "bookingDate": booking_date,
@@ -795,7 +840,7 @@ class PulseClient:
         if status:
             params["status"] = status
 
-        return await self._request("GET", "/api/Bookings", params=params)
+        return await self._request("GET", "/api/v1/resident/bookings", params=params)
 
     async def get_bookings_queue(
         self,
@@ -840,7 +885,11 @@ class PulseClient:
         Returns:
             Cancellation result
         """
-        return await self._request("DELETE", f"/api/Bookings/{booking_id}")
+        return await self._request(
+            "PUT",
+            f"/api/v1/resident/bookings/{booking_id}/cancel",
+            json_data={"reason": "Cancelled by Pulse AI assistant"},
+        )
 
     # ==================== Reference Data ====================
 

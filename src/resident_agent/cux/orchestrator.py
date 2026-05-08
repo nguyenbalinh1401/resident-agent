@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any, AsyncGenerator
 from pathlib import Path
 import json
 import re
+import unicodedata
 import yaml
 import structlog
 from openai import AsyncOpenAI
@@ -41,6 +42,76 @@ def _attachment_value(att: Any, key: str) -> Any:
 
 def _attachment_is_image(att: Any) -> bool:
     return str(_attachment_value(att, "type") or "").lower() == "image"
+
+
+def _normalize_text_for_match(content: str) -> str:
+    text = unicodedata.normalize("NFKD", content or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return text.lower()
+
+
+def _looks_like_high_impact_success_claim(content: str) -> bool:
+    text = _normalize_text_for_match(content)
+    success_markers = [
+        "đã tạo",
+        "đã ghi nhận",
+        "đã đặt",
+        "đã báo cáo",
+        "đã cập nhật",
+        "đã xoá",
+        "đã xóa",
+        "đã huỷ",
+        "đã hủy",
+        "thành công",
+        "da tao",
+        "da ghi nhan",
+        "da dat",
+        "da bao cao",
+        "da cap nhat",
+        "da xoa",
+        "da huy",
+        "thanh cong",
+        "created",
+        "booked",
+        "recorded",
+        "updated",
+        "deleted",
+        "cancelled",
+        "reported",
+    ]
+    return any(marker in text for marker in success_markers)
+
+
+def _looks_like_clarification_question(content: str) -> bool:
+    text = _normalize_text_for_match(content).strip()
+    if "?" in text:
+        return True
+    question_starts = [
+        "ban muon",
+        "ban co muon",
+        "vui long cho toi biet",
+        "cho toi biet",
+        "ban vui long",
+        "hay cho toi biet",
+        "bạn muốn",
+        "bạn có muốn",
+        "vui lòng cho tôi biết",
+        "cho tôi biết",
+        "bạn vui lòng",
+        "hãy cho tôi biết",
+    ]
+    return any(text.startswith(prefix) for prefix in question_starts)
+
+
+def _format_tool_error(error: Exception) -> Dict[str, Any]:
+    details = getattr(error, "details", None)
+    status_code = getattr(error, "status_code", None)
+    payload: Dict[str, Any] = {"error": str(error)}
+    if status_code is not None:
+        payload["statusCode"] = status_code
+    if details:
+        payload["details"] = details
+    return payload
 
 
 def _permission_strings(
@@ -471,6 +542,95 @@ class CuxOrchestrator:
             )
             return content, []
 
+    async def _execute_tool_calls(
+        self,
+        tool_calls: List[Any],
+        pulse_client: Optional[PulseClient],
+        permissions: List[Dict[str, str]],
+    ) -> tuple[List[Dict[str, Any]], List[ToolCall], Optional[str]]:
+        tool_results: List[Dict[str, Any]] = []
+        tool_calls_made: List[ToolCall] = []
+        last_tool_name: Optional[str] = None
+
+        for tc in tool_calls:
+            tool_name = tc.function.name
+            params = json.loads(tc.function.arguments)
+            last_tool_name = tool_name
+
+            logger.info("executing_tool", tool=tool_name, params=params)
+
+            try:
+                result = await execute_tool(
+                    tool_name,
+                    params,
+                    pulse_client,
+                    user_permissions=permissions,
+                )
+                tool_results.append(
+                    {
+                        "tool_call_id": tc.id,
+                        "role": "tool",
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+                tool_calls_made.append(
+                    ToolCall(
+                        tool=tool_name,
+                        params=params,
+                        result=result,
+                    )
+                )
+            except Exception as e:
+                logger.error("tool_execution_failed", tool=tool_name, error=str(e))
+                error_payload = _format_tool_error(e)
+                tool_results.append(
+                    {
+                        "tool_call_id": tc.id,
+                        "role": "tool",
+                        "content": json.dumps(error_payload, ensure_ascii=False),
+                    }
+                )
+                tool_calls_made.append(
+                    ToolCall(
+                        tool=tool_name,
+                        params=params,
+                        result=error_payload,
+                    )
+                )
+
+        return tool_results, tool_calls_made, last_tool_name
+
+    async def _retry_agentic_call_with_tool_guard(
+        self,
+        client: OpenAIClient,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        session_id: str,
+    ) -> Any:
+        guarded_messages = list(messages)
+        guarded_messages.insert(
+            1,
+            {
+                "role": "system",
+                "content": (
+                    "For this turn, never claim that a create, update, delete, booking, "
+                    "report, approval, or cancellation action succeeded unless you actually "
+                    "call the correct tool in this response. If data is missing, ask a "
+                    "clarification question instead."
+                ),
+            },
+        )
+        retry_response = await client.chat_completion(
+            messages=guarded_messages,
+            tools=tools,
+        )
+        self._log_llm_response(
+            retry_response,
+            context="agentic_retry_with_tool_guard",
+            session_id=session_id,
+        )
+        return retry_response
+
     async def _handle_chitchat(
         self,
         message: str,
@@ -583,52 +743,12 @@ class CuxOrchestrator:
 
             # Check if tool calls were made
             if assistant_message.tool_calls:
-                # Execute tools
-                tool_results = []
-                for tc in assistant_message.tool_calls:
-                    tool_name = tc.function.name
-                    params = json.loads(tc.function.arguments)
-                    last_tool_name = tool_name
-
-                    logger.info("executing_tool", tool=tool_name, params=params)
-
-                    try:
-                        result = await execute_tool(
-                            tool_name,
-                            params,
-                            pulse_client,
-                            user_permissions=permissions,
-                        )
-                        tool_results.append(
-                            {
-                                "tool_call_id": tc.id,
-                                "role": "tool",
-                                "content": json.dumps(result, ensure_ascii=False),
-                            }
-                        )
-                        tool_calls_made.append(
-                            ToolCall(
-                                tool=tool_name,
-                                params=params,
-                                result=result,
-                            )
-                        )
-                    except Exception as e:
-                        logger.error("tool_execution_failed", tool=tool_name, error=str(e))
-                        tool_results.append(
-                            {
-                                "tool_call_id": tc.id,
-                                "role": "tool",
-                                "content": json.dumps({"error": str(e)}),
-                            }
-                        )
-                        tool_calls_made.append(
-                            ToolCall(
-                                tool=tool_name,
-                                params=params,
-                                result={"error": str(e)},
-                            )
-                        )
+                tool_results, executed_calls, last_tool_name = await self._execute_tool_calls(
+                    assistant_message.tool_calls,
+                    pulse_client,
+                    permissions,
+                )
+                tool_calls_made.extend(executed_calls)
 
                 # Add assistant message with tool calls
                 messages.append(
@@ -658,9 +778,75 @@ class CuxOrchestrator:
                 self._log_llm_response(final_response, context="agentic_final_response", session_id=session_id)
                 raw_content = final_response.choices[0].message.content
                 message_text, actions = self._parse_agentic_json_response(raw_content)
+                if (
+                    not tool_calls_made
+                    and _looks_like_high_impact_success_claim(message_text)
+                    and not _looks_like_clarification_question(message_text)
+                ):
+                    message_text = (
+                        "Mình đã ghi nhận yêu cầu của bạn nhưng chưa xác nhận được thao tác thành công trên hệ thống. "
+                        "Bạn vui lòng thử lại hoặc cung cấp thêm thông tin để mình thực hiện đúng cách."
+                    )
+                    actions = []
             else:
                 raw_content = assistant_message.content or '{"message": "Tôi không hiểu yêu cầu của bạn. Bạn có thể diễn đạt lại không?", "actions": []}'
                 message_text, actions = self._parse_agentic_json_response(raw_content)
+
+            if (
+                not tool_calls_made
+                and _looks_like_high_impact_success_claim(message_text)
+                and not _looks_like_clarification_question(message_text)
+            ):
+                retry_response = await self._retry_agentic_call_with_tool_guard(
+                    client=client,
+                    messages=messages,
+                    tools=tools,
+                    session_id=session_id,
+                )
+                retry_message = retry_response.choices[0].message
+                if retry_message.tool_calls:
+                    assistant_message = retry_message
+                    tool_results, executed_calls, last_tool_name = await self._execute_tool_calls(
+                        assistant_message.tool_calls,
+                        pulse_client,
+                        permissions,
+                    )
+                    tool_calls_made.extend(executed_calls)
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": tc.function.arguments,
+                                    },
+                                }
+                                for tc in assistant_message.tool_calls
+                            ],
+                        }
+                    )
+                    messages.extend(tool_results)
+                    final_response = await client.chat_completion(
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                    )
+                    self._log_llm_response(
+                        final_response,
+                        context="agentic_final_response_after_late_retry",
+                        session_id=session_id,
+                    )
+                    raw_content = final_response.choices[0].message.content
+                    message_text, actions = self._parse_agentic_json_response(raw_content)
+                else:
+                    message_text = (
+                        "Mình đã ghi nhận yêu cầu của bạn nhưng chưa xác nhận được thao tác thành công trên hệ thống. "
+                        "Bạn vui lòng thử lại hoặc cung cấp thêm thông tin để mình thực hiện đúng cách."
+                    )
+                    actions = []
 
         return ChatResponse(
             message=message_text,
