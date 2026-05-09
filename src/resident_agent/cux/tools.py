@@ -55,7 +55,7 @@ def _wrap_result(result: Union[Dict, List, Any]) -> Dict[str, Any]:
         return {"data": result}
     if not isinstance(result, dict):
         return {"value": result}
-    return _wrap_result(result)
+    return result
 
 # Tool definitions following OpenAI's function calling format
 TOOLS = [
@@ -1800,6 +1800,7 @@ async def execute_tool(
     params: dict,
     pulse_client: PulseClient,
     user_permissions: Optional[List[Dict[str, str]]] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> dict:
     """Execute a tool by calling the Pulse Backend API.
 
@@ -1957,7 +1958,28 @@ async def execute_tool(
 
         # Incident tools
         elif tool_name == "create_incident":
-            result = await pulse_client.create_ticket(**params)
+            created_ticket = await pulse_client.create_ticket(**params)
+            ticket_id = None
+            if isinstance(created_ticket, dict):
+                ticket_id = (
+                    created_ticket.get("ticketId")
+                    or created_ticket.get("id")
+                    or created_ticket.get("value")
+                )
+            elif created_ticket is not None:
+                ticket_id = created_ticket
+
+            uploaded_images: List[str] = []
+            if ticket_id and attachments:
+                uploaded_images = await pulse_client.upload_ticket_images_from_attachments(
+                    str(ticket_id),
+                    attachments=attachments,
+                    image_type="Before",
+                )
+
+            result = _wrap_result(created_ticket)
+            if uploaded_images:
+                result["uploadedImageUrls"] = uploaded_images
 
         elif tool_name == "get_my_incidents":
             result = _wrap_result(await pulse_client.get_my_incidents(**params))

@@ -634,6 +634,7 @@ class CuxOrchestrator:
         tool_calls: List[Any],
         pulse_client: Optional[PulseClient],
         permissions: List[Dict[str, str]],
+        attachments: Optional[List[Any]] = None,
     ) -> tuple[List[Dict[str, Any]], List[ToolCall], Optional[str]]:
         tool_results: List[Dict[str, Any]] = []
         tool_calls_made: List[ToolCall] = []
@@ -652,6 +653,7 @@ class CuxOrchestrator:
                     params,
                     pulse_client,
                     user_permissions=permissions,
+                    attachments=attachments,
                 )
                 tool_results.append(
                     {
@@ -847,6 +849,7 @@ class CuxOrchestrator:
                     assistant_message.tool_calls,
                     pulse_client,
                     permissions,
+                    attachments,
                 )
                 tool_calls_made.extend(executed_calls)
 
@@ -910,6 +913,7 @@ class CuxOrchestrator:
                         assistant_message.tool_calls,
                         pulse_client,
                         permissions,
+                        attachments,
                     )
                     tool_calls_made.extend(executed_calls)
                     messages.append(

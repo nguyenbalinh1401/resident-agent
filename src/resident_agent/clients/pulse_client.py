@@ -6,6 +6,7 @@ Handles authentication, billing, bookings, tickets, packages, etc.
 
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+import base64
 import json
 import httpx
 import structlog
@@ -505,6 +506,89 @@ class PulseClient:
         }
 
         return await self._request("POST", "/api/v1/resident/incidents", json_data=payload)
+
+    async def upload_ticket_images_from_attachments(
+        self,
+        ticket_id: str,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        image_type: str = "Before",
+    ) -> List[str]:
+        """Upload inline chat image attachments to an existing ticket.
+
+        Args:
+            ticket_id: Created ticket ID
+            attachments: Chat attachments carrying base64 image payloads
+            image_type: Ticket image type expected by backend
+
+        Returns:
+            List of uploaded image URLs from backend
+        """
+        if not ticket_id or not attachments:
+            return []
+
+        image_attachments = []
+        for index, att in enumerate(attachments):
+            if str(att.get("type") or "").lower() != "image":
+                continue
+            data = att.get("data")
+            mime_type = str(att.get("mime_type") or "image/jpeg")
+            if not data:
+                continue
+            try:
+                binary = base64.b64decode(data)
+            except Exception:
+                logger.warning("ticket_attachment_decode_failed", ticket_id=ticket_id, index=index)
+                continue
+
+            extension = ".jpg"
+            if "/" in mime_type:
+                guessed = mime_type.split("/", 1)[1].strip().lower()
+                if guessed in {"jpeg", "jpg", "png", "webp"}:
+                    extension = ".jpg" if guessed == "jpeg" else f".{guessed}"
+
+            image_attachments.append(
+                (
+                    "files",
+                    (f"agent-ticket-{index + 1}{extension}", binary, mime_type),
+                )
+            )
+
+        if not image_attachments:
+            return []
+
+        if not self.config.token:
+            raise PulseAPIError("Missing auth token for ticket image upload.")
+
+        headers = {"Accept": "application/json", "Authorization": f"Bearer {self.config.token}"}
+        async with httpx.AsyncClient(
+            base_url=self.config.base_url,
+            timeout=self.config.timeout,
+            headers=headers,
+        ) as upload_client:
+            response = await upload_client.post(
+                f"/api/Tickets/{ticket_id}/images/upload-batch",
+                data={"imageType": image_type},
+                files=image_attachments,
+            )
+
+        if response.status_code >= 400:
+            error_detail = {}
+            try:
+                error_detail = response.json()
+            except Exception:
+                error_detail = {"raw": response.text}
+            raise PulseAPIError(
+                message=f"Ticket image upload failed: {response.status_code}",
+                status_code=response.status_code,
+                details=error_detail,
+            )
+
+        payload = response.json()
+        if isinstance(payload, dict):
+            urls = payload.get("imageUrls")
+            if isinstance(urls, list):
+                return [str(url) for url in urls]
+        return []
 
     async def get_tickets(
         self,
