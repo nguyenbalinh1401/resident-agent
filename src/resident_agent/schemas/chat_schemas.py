@@ -103,6 +103,14 @@ class ChatRequest(BaseModel):
         default=None,
         description="Additional context from client",
     )
+    locale: Optional[str] = Field(
+        default=None,
+        description="Client locale, e.g. vi or en",
+    )
+    preferred_language: Optional[str] = Field(
+        default=None,
+        description="Preferred response language, e.g. vi or en",
+    )
 
     model_config = {"use_enum_values": True}
 

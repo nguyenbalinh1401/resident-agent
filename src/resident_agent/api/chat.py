@@ -18,26 +18,40 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
-def _provider_error_message(error: Exception) -> Optional[str]:
+def _normalize_locale(locale: Optional[str]) -> str:
+    raw = (locale or "").strip().lower()
+    if raw.startswith("en"):
+        return "en"
+    return "vi"
+
+
+def _localized_text(locale: str, vi: str, en: str) -> str:
+    return en if _normalize_locale(locale) == "en" else vi
+
+
+def _provider_error_message(error: Exception, locale: str = "vi") -> Optional[str]:
     text = str(error)
     lowered = text.lower()
 
     if "api key expired" in lowered or "api_key_invalid" in lowered:
-        return (
-            "Dich vu AI tam thoi chua san sang do khoa API da het han hoac khong hop le. "
-            "Vui long cap nhat API key tren server Agent."
+        return _localized_text(
+            locale,
+            "Dịch vụ AI tạm thời chưa sẵn sàng do khóa API đã hết hạn hoặc không hợp lệ. Vui lòng cập nhật API key trên server Agent.",
+            "The AI service is temporarily unavailable because the API key is expired or invalid. Please update the API key on the Agent server.",
         )
 
     if "user location is not supported" in lowered or "failed_precondition" in lowered:
-        return (
-            "Dich vu AI hien dang bi chan theo khu vuc cua nha cung cap. "
-            "Vui long doi provider ho tro hoac cap nhat cau hinh server Agent."
+        return _localized_text(
+            locale,
+            "Dịch vụ AI hiện đang bị chặn theo khu vực của nhà cung cấp. Vui lòng đổi provider hỗ trợ hoặc cập nhật cấu hình server Agent.",
+            "The AI service is currently blocked for the provider region. Please switch to a supported provider or update the Agent server configuration.",
         )
 
     if "permission_denied" in lowered or "denied access" in lowered:
-        return (
-            "Dich vu AI dang bi tu choi quyen truy cap. "
-            "Vui long kiem tra Vertex AI API, billing va role Vertex AI User cho service account."
+        return _localized_text(
+            locale,
+            "Dịch vụ AI đang bị từ chối quyền truy cập. Vui lòng kiểm tra Vertex AI API, billing và role Vertex AI User cho service account.",
+            "The AI service was denied access. Please verify Vertex AI API, billing, and the Vertex AI User role for the service account.",
         )
 
     return None
@@ -97,6 +111,8 @@ async def chat(
     Returns:
         ChatResponse with message, actions, and session_id
     """
+    locale = _normalize_locale(request.preferred_language or request.locale)
+
     # Generate session_id if not provided
     session_id = _resolve_session_id(request.session_id, user)
 
@@ -120,10 +136,13 @@ async def chat(
             pulse_client=pulse_client,
             intent_type=request.intent_type or "agentic_flow",
             attachments=request.attachments,
+            locale=locale,
         )
     except BadRequestError as e:
-        friendly = _provider_error_message(e) or (
-            "Dich vu AI tam thoi gap loi khi xu ly yeu cau. Vui long thu lai sau."
+        friendly = _provider_error_message(e, locale) or _localized_text(
+            locale,
+            "Dịch vụ AI tạm thời gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.",
+            "The AI service temporarily failed while processing your request. Please try again later.",
         )
         logger.warning(
             "chat_provider_error",
@@ -147,7 +166,11 @@ async def chat(
             exc_info=True,
         )
         return ChatResponse(
-            message="Dich vu AI tam thoi gap loi khi xu ly yeu cau. Vui long thu lai sau.",
+            message=_localized_text(
+                locale,
+                "Dịch vụ AI tạm thời gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.",
+                "The AI service temporarily failed while processing your request. Please try again later.",
+            ),
             actions=[],
             session_id=session_id,
             tool_calls=[],
@@ -196,6 +219,7 @@ async def execute_action(
     Returns:
         ChatResponse with action results
     """
+    locale = _normalize_locale(request.preferred_language or request.locale)
     session_id = _resolve_session_id(request.session_id, user)
     action = request.action or request.message
 
@@ -219,10 +243,13 @@ async def execute_action(
             pulse_client=pulse_client,
             intent_type="tool_call",
             attachments=request.attachments,
+            locale=locale,
         )
     except BadRequestError as e:
-        friendly = _provider_error_message(e) or (
-            "Dich vu AI tam thoi chua the thuc hien hanh dong nay. Vui long thu lai sau."
+        friendly = _provider_error_message(e, locale) or _localized_text(
+            locale,
+            "Dịch vụ AI tạm thời chưa thể thực hiện hành động này. Vui lòng thử lại sau.",
+            "The AI service cannot perform this action right now. Please try again later.",
         )
         logger.warning(
             "action_provider_error",
@@ -248,7 +275,11 @@ async def execute_action(
             exc_info=True,
         )
         return ChatResponse(
-            message="Dich vu AI tam thoi chua the thuc hien hanh dong nay. Vui long thu lai sau.",
+            message=_localized_text(
+                locale,
+                "Dịch vụ AI tạm thời chưa thể thực hiện hành động này. Vui lòng thử lại sau.",
+                "The AI service cannot perform this action right now. Please try again later.",
+            ),
             actions=[],
             session_id=session_id,
             tool_calls=[],

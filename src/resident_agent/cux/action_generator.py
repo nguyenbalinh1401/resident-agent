@@ -14,6 +14,21 @@ from resident_agent.auth.permission_mapper import PermissionMapper
 logger = structlog.get_logger()
 
 
+def _normalize_locale(locale: Optional[str]) -> str:
+    raw = (locale or "").strip().lower()
+    if raw.startswith("en"):
+        return "en"
+    return "vi"
+
+
+def _language_name(locale: Optional[str]) -> str:
+    return "English" if _normalize_locale(locale) == "en" else "Vietnamese"
+
+
+def _localized_text(locale: Optional[str], vi: str, en: str) -> str:
+    return en if _normalize_locale(locale) == "en" else vi
+
+
 class ActionGenerator:
     """Route actions and format results using LLM."""
 
@@ -42,6 +57,7 @@ class ActionGenerator:
         self,
         action: str,
         permissions: List[Dict[str, str]],
+        locale: str = "vi",
     ) -> Dict[str, Any]:
         """Use LLM to resolve action to tool with permission check.
 
@@ -53,7 +69,7 @@ class ActionGenerator:
             Dict: {"allowed": bool, "tool": str, "params": dict, "message": str}
         """
         if not self.openai_client:
-            return self._fallback_resolve_action(action, permissions)
+            return self._fallback_resolve_action(action, permissions, locale)
 
         permissions = self.permission_mapper.normalize_permissions(permissions)
 
@@ -79,6 +95,7 @@ class ActionGenerator:
             action=action,
             permissions=perm_str,
             tools=tools_str,
+            response_language=_language_name(locale),
         )
 
         try:
@@ -95,9 +112,9 @@ class ActionGenerator:
 
         except Exception as e:
             logger.error("llm_action_resolve_failed", action=action, error=str(e))
-            return self._fallback_resolve_action(action, permissions)
+            return self._fallback_resolve_action(action, permissions, locale)
 
-    def _fallback_resolve_action(self, action: str, permissions: List[Dict[str, str]]) -> Dict[str, Any]:
+    def _fallback_resolve_action(self, action: str, permissions: List[Dict[str, str]], locale: str = "vi") -> Dict[str, Any]:
         """Fallback action resolution without LLM."""
         permissions = self.permission_mapper.normalize_permissions(permissions)
 
@@ -114,7 +131,11 @@ class ActionGenerator:
         if not tool:
             return {
                 "allowed": False,
-                "message": "Tôi không hỗ trợ hành động này. Vui lòng thử hành động khác."
+                "message": _localized_text(
+                    locale,
+                    "Tôi không hỗ trợ hành động này. Vui lòng thử hành động khác.",
+                    "I do not support this action. Please try a different action.",
+                ),
             }
 
         required_perm = self.tool_permissions.get(tool)
@@ -130,7 +151,11 @@ class ActionGenerator:
 
         return {
             "allowed": False,
-            "message": "Bạn không có quyền thực hiện hành động này."
+            "message": _localized_text(
+                locale,
+                "Bạn không có quyền thực hiện hành động này.",
+                "You do not have permission to perform this action.",
+            ),
         }
 
     def _find_tool_for_action(self, action: str) -> Optional[str]:
@@ -235,6 +260,7 @@ class ActionGenerator:
         action: str,
         tool_name: str,
         result: Any,
+        locale: str = "vi",
     ) -> str:
         """Use LLM to format tool result as markdown.
 
@@ -247,12 +273,17 @@ class ActionGenerator:
             Formatted markdown string in Vietnamese
         """
         if not self.openai_client:
-            return self._simple_format_result(tool_name, self._sanitize_for_display(result))
+            return self._simple_format_result(tool_name, self._sanitize_for_display(result), locale)
 
         prompt_template = self.prompts.get("result_formatter", _DEFAULT_RESULT_FORMATTER_PROMPT)
         sanitized_result = self._sanitize_for_display(result)
         result_str = json.dumps(sanitized_result, ensure_ascii=False, indent=2)
-        prompt = prompt_template.format(action=action, tool_name=tool_name, result=result_str)
+        prompt = prompt_template.format(
+            action=action,
+            tool_name=tool_name,
+            result=result_str,
+            response_language=_language_name(locale),
+        )
 
         try:
             response = await self.openai_client.chat.completions.create(
@@ -264,9 +295,9 @@ class ActionGenerator:
 
         except Exception as e:
             logger.error("llm_format_failed", tool=tool_name, error=str(e))
-            return self._simple_format_result(tool_name, sanitized_result)
+            return self._simple_format_result(tool_name, sanitized_result, locale)
 
-    def _simple_format_result(self, tool_name: str, result: Any) -> str:
+    def _simple_format_result(self, tool_name: str, result: Any, locale: str = "vi") -> str:
         """Simple fallback formatter."""
         if isinstance(result, dict):
             if "error" in result:

@@ -33,6 +33,29 @@ from resident_agent.cux.state_manager import StateManager
 logger = structlog.get_logger()
 
 
+def _normalize_locale(locale: Optional[str]) -> str:
+    raw = (locale or "").strip().lower()
+    if raw.startswith("en"):
+        return "en"
+    return "vi"
+
+
+def _localized_text(locale: str, vi: str, en: str) -> str:
+    return en if _normalize_locale(locale) == "en" else vi
+
+
+def _response_language_instruction(locale: str) -> str:
+    if _normalize_locale(locale) == "en":
+        return (
+            "Respond in English by default. If the user explicitly switches to Vietnamese, "
+            "you may reply in Vietnamese for that turn."
+        )
+    return (
+        "Mặc định trả lời bằng tiếng Việt. Nếu người dùng chuyển sang tiếng Anh rõ ràng, "
+        "hãy trả lời bằng tiếng Anh cho lượt đó."
+    )
+
+
 def _attachment_value(att: Any, key: str) -> Any:
     """Read attachment data from either dicts or Pydantic-style objects."""
     if isinstance(att, dict):
@@ -198,6 +221,7 @@ class CuxOrchestrator:
         pulse_client: Optional[PulseClient] = None,
         intent_type: str = "agentic_flow",
         attachments: Optional[List[Any]] = None,
+        locale: str = "vi",
     ) -> ChatResponse:
         """Process a user message and return response.
 
@@ -235,10 +259,10 @@ class CuxOrchestrator:
 
         # Handle based on intent type
         if intent_type == "chitchat":
-            response = await self._handle_chitchat(message, session_id, history)
+            response = await self._handle_chitchat(message, session_id, history, locale)
         elif intent_type == "tool_call":
             response = await self._handle_tool_call_direct(
-                message, session_id, pulse_client, user
+                message, session_id, pulse_client, user, locale
             )
         else:  # agentic_flow
             response = await self._handle_agentic_flow(
@@ -249,6 +273,7 @@ class CuxOrchestrator:
                 permissions,
                 history,
                 attachments,
+                locale,
             )
 
         # Add assistant message to history
@@ -636,6 +661,7 @@ class CuxOrchestrator:
         message: str,
         session_id: str,
         history: List[Dict[str, str]],
+        locale: str = "vi",
     ) -> ChatResponse:
         """Handle chitchat messages directly with LLM.
 
@@ -647,7 +673,11 @@ class CuxOrchestrator:
         Returns:
             ChatResponse
         """
-        messages = [{"role": "system", "content": self._prompts["chitchat"]}]
+        system_prompt = (
+            f"{self._prompts['chitchat']}\n\n"
+            f"Language rule: {_response_language_instruction(locale)}"
+        )
+        messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
 
         async with OpenAIClient(self.settings) as client:
@@ -676,6 +706,7 @@ class CuxOrchestrator:
         permissions: List[Dict[str, str]],
         history: List[Dict[str, str]],
         attachments: Optional[List[Any]],
+        locale: str = "vi",
     ) -> ChatResponse:
         """Handle agentic flow with tool calling.
 
@@ -696,6 +727,12 @@ class CuxOrchestrator:
             user_name=user.get("name", "Cư dân"),
             unit=user.get("unit", "Resident"),
             permissions=", ".join(_permission_strings(self.permission_mapper, permissions)) if permissions else "basic",
+        )
+
+        system_prompt = (
+            f"{system_prompt}\n\n"
+            f"Language rule: {_response_language_instruction(locale)}\n"
+            "Match the user's language in this turn. Do not default to Vietnamese when the user writes in English."
         )
 
         # Build messages
@@ -861,6 +898,7 @@ class CuxOrchestrator:
         session_id: str,
         pulse_client: Optional[PulseClient],
         user: Dict[str, Any],
+        locale: str = "vi",
     ) -> ChatResponse:
         """Handle direct tool call (from UI action button).
 
@@ -881,7 +919,7 @@ class CuxOrchestrator:
         permissions = self.permission_mapper.normalize_permissions(user.get("permissions", []))
 
         # Use ActionGenerator to validate action and decide tool
-        tool_decision = await self.action_generator.resolve_action(action, permissions)
+        tool_decision = await self.action_generator.resolve_action(action, permissions, locale)
 
         if not tool_decision.get("allowed"):
             logger.info(
@@ -916,7 +954,7 @@ class CuxOrchestrator:
             )
 
             # Use ActionGenerator to format response as markdown
-            message = await self.action_generator.format_tool_result(action, tool_name, result)
+            message = await self.action_generator.format_tool_result(action, tool_name, result, locale)
 
             return ChatResponse(
                 message=message,
