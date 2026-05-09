@@ -137,6 +137,67 @@ def _format_tool_error(error: Exception) -> Dict[str, Any]:
     return payload
 
 
+def _sanitize_user_message(content: str, locale: str) -> str:
+    """Remove internal implementation details from user-facing responses."""
+    if not content:
+        return content
+
+    sanitized = content
+    sanitized = re.sub(
+        r"\b(?:get|create|update|delete|approve|reject|assign|register|notify|record|delegate|revoke|lookup|mark|submit|cancel|complete|preverify|bulk_update)_[a-z0-9_]+\(\)",
+        "",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"\b(?:using|via)\s+[a-z_]+\(\)",
+        "",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"\b(?:using|via)\s*(?=[\.,;:])",
+        "",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"\b(?:unit|user|ticket|request|package|parcel|notification|event|amenity|card)\s+id:\s*[A-Za-z0-9-]{6,}",
+        _localized_text(locale, "căn hộ liên kết", "linked unit"),
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"\b(?:public_?id|internal_?id|createdby|updatedby|requestdatajson|userid|unitid|ticketid|requestid|packageid|parcelid|eventid|amenityid|cardid)\b",
+        "",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"\b[0-9a-f]{8}-[0-9a-f-]{19,}\b",
+        _localized_text(locale, "mã nội bộ đã được ẩn", "internal code hidden"),
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+    sanitized = sanitized.replace(" .", ".").replace(" ,", ",").strip()
+
+    lines = []
+    for line in sanitized.splitlines():
+        lowered = line.lower()
+        if re.search(r"\b[a-z]+_[a-z0-9_]+\(\)", lowered):
+            continue
+        lines.append(line)
+    sanitized = "\n".join(lines).strip()
+
+    return sanitized or _localized_text(
+        locale,
+        "Mình đã rà thông tin liên quan và có thể hỗ trợ bạn theo hướng nghiệp vụ tiếp theo.",
+        "I reviewed the relevant information and can help you with the next business step.",
+    )
+
+
 def _permission_strings(
     permission_mapper: PermissionMapper,
     permissions: Optional[List[Dict[str, Any]]],
@@ -495,6 +556,7 @@ class CuxOrchestrator:
             last_tool=last_tool_name,
             permissions=permissions,
             last_message=accumulated_content,
+            locale="vi",
         )
 
         # Yield actions event
@@ -689,10 +751,11 @@ class CuxOrchestrator:
             # Get contextual actions
             actions = await self.action_generator.generate_actions(
                 last_message=message,  # user's message as context
+                locale=locale,
             )
 
             return ChatResponse(
-                message=content,
+                message=_sanitize_user_message(content, locale),
                 actions=actions,
                 session_id=session_id,
             )
@@ -886,7 +949,7 @@ class CuxOrchestrator:
                     actions = []
 
         return ChatResponse(
-            message=message_text,
+            message=_sanitize_user_message(message_text, locale),
             actions=actions,
             session_id=session_id,
             tool_calls=tool_calls_made,
@@ -957,7 +1020,7 @@ class CuxOrchestrator:
             message = await self.action_generator.format_tool_result(action, tool_name, result, locale)
 
             return ChatResponse(
-                message=message,
+                message=_sanitize_user_message(message, locale),
                 session_id=session_id,
                 tool_calls=[
                     ToolCall(

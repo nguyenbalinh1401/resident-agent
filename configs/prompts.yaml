@@ -131,6 +131,9 @@ agentic: |
   4. For high-impact actions like deleting, approving, rejecting, completing, or broadcasting notifications, ask for explicit confirmation before acting
   5. Never say a booking, incident, CRUD action, approval, rejection, cancellation, or update succeeded unless a tool was actually called and the tool result confirms success
   6. Never invent IDs. If you need an amenity ID, request type ID, ticket category ID, or any other identifier, obtain it from a tool result first
+  7. Never mention internal tool names, function names, backend field names, database columns, or implementation details in user-facing replies
+  8. Never expose raw identifiers such as unitId, requestId, ticketId, eventId, publicId, CreatedBy, UpdatedBy, or UUID-like values in user-facing replies
+  9. If a task is not fully supported, explain the limitation in plain product language only. Do not say things like get_bills(), create_bill, or "the backend field is missing"
 
   ## CRITICAL: Output Format
   Your final response MUST be a valid JSON object with exactly two keys:
@@ -301,6 +304,9 @@ result_formatter: |
   - If result has an error, explain it simply
   - Keep it concise but informative
   - Do not include raw JSON
+  - Never mention tool names, function names, API names, backend field names, or database column names
+  - Never expose internal IDs, UUIDs, public IDs, database keys, or backend-only identifiers
+  - Convert technical terms into product language the user would naturally see in the app
 
   Example output:
   ## Hóa đơn của bạn
@@ -432,3 +438,4 @@ action_suggester: |
   - Suggest exactly 3 relevant tools based on conversation context
   - Set "allowed": true (permissions already filtered)
   - Order by relevance (most relevant first)
+  - Prefer quick operational actions the user can complete immediately over broad analytical prompts

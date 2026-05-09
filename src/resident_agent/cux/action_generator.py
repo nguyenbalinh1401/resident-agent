@@ -313,6 +313,32 @@ class ActionGenerator:
 
         return str(result)
 
+    def _simple_format_result(self, tool_name: str, result: Any, locale: str = "vi") -> str:
+        """Localized fallback formatter used when the LLM formatter is unavailable."""
+        if isinstance(result, dict):
+            if "error" in result:
+                return _localized_text(
+                    locale,
+                    f"❌ **Lỗi**: {result['error']}",
+                    f"❌ **Error**: {result['error']}",
+                )
+            if "data" in result and isinstance(result["data"], list):
+                return _localized_text(
+                    locale,
+                    f"## Kết quả\n\nTìm thấy **{len(result['data'])}** mục.",
+                    f"## Results\n\nFound **{len(result['data'])}** items.",
+                )
+            return f"```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```"
+
+        if isinstance(result, list):
+            return _localized_text(
+                locale,
+                f"## Kết quả\n\nTìm thấy **{len(result)}** mục.",
+                f"## Results\n\nFound **{len(result)}** items.",
+            )
+
+        return str(result)
+
     def _sanitize_for_display(self, value: Any) -> Any:
         """Remove internal identifiers before sending results to user-facing formatting."""
         if isinstance(value, list):
@@ -346,6 +372,9 @@ class ActionGenerator:
             "publicid",
             "public_id",
             "internalid",
+            "createdby",
+            "updatedby",
+            "deletedby",
         }:
             return True
 
@@ -356,6 +385,7 @@ class ActionGenerator:
         last_tool: Optional[str] = None,
         permissions: Optional[List[Dict[str, str]]] = None,
         last_message: Optional[str] = None,
+        locale: str = "vi",
     ) -> List[Dict[str, Any]]:
         """Generate 3 contextual action suggestions using LLM.
 
@@ -389,6 +419,7 @@ class ActionGenerator:
             last_tool=last_tool or "None",
             last_message=last_message or "None",
             permissions=perm_str,
+            response_language=_language_name(locale),
         )
 
         try:
@@ -418,7 +449,7 @@ class ActionGenerator:
 
 
 # Default prompts (used if not in prompts.yaml)
-_DEFAULT_ACTION_ROUTER_PROMPT = """You are an action router for a Vietnamese resident services app.
+_DEFAULT_ACTION_ROUTER_PROMPT = """You are an action router for a resident services app.
 
 Given an action and user permissions, decide:
 1. Is this action allowed based on permissions?
@@ -430,27 +461,27 @@ User permissions: {permissions}
 Available tools:
 {tools}
 
-Respond in JSON: {{"allowed": true/false, "tool": "tool_name", "params": {{}}, "message": "friendly Vietnamese message if not allowed"}}
+Respond in JSON: {{"allowed": true/false, "tool": "tool_name", "params": {{}}, "message": "friendly message in {response_language} if not allowed"}}
 
 Examples:
 - Action "view_bills" + permission "Bills.Read" -> {{"allowed": true, "tool": "get_bills", "params": {{}}}}
 - Action "view_bills" + no Bills.Read -> {{"allowed": false, "message": "Bạn không có quyền xem hóa đơn."}}"""
 
-_DEFAULT_RESULT_FORMATTER_PROMPT = """Format the following tool result as friendly Vietnamese markdown.
+_DEFAULT_RESULT_FORMATTER_PROMPT = """Format the following tool result as a friendly markdown message in {response_language}.
 
 Action: {action}
 Tool: {tool_name}
 Result: {result}
 
 Requirements:
-- Write in Vietnamese, friendly tone
+- Write in {response_language}, friendly tone
 - Use markdown formatting (headers, tables, lists)
 - If result is a list, show as formatted table
 - Keep it concise but informative
 - Do not include raw JSON
 - Never expose internal IDs, UUIDs, public IDs, database keys, or backend-only identifiers"""
 
-_DEFAULT_ACTION_SUGGESTER_PROMPT = """You are a smart action suggester for a Vietnamese resident services app.
+_DEFAULT_ACTION_SUGGESTER_PROMPT = """You are a smart action suggester for a resident services app.
 
 Based on the conversation context, suggest 3 relevant next actions for the user.
 
@@ -510,7 +541,7 @@ Based on the conversation context, suggest 3 relevant next actions for the user.
 - get_resident_request_audit_logs: View resident request audit logs
 - get_request_types: View request types
 - register_visitor: Register a visitor
-- get_profile: View profile
+  - get_profile: View profile
 
 Respond in JSON format:
 {{"actions": [
@@ -521,4 +552,6 @@ Respond in JSON format:
 Rules:
 - Suggest exactly 3 relevant tools based on conversation context
 - Set "allowed": true (permissions already filtered)
-- Order by relevance (most relevant first)"""
+- Order by relevance (most relevant first)
+- Prefer high-value operational shortcuts over broad analytical prompts
+- Never suggest exposing backend field names, function names, or internal identifiers to the user"""
