@@ -494,11 +494,12 @@ class PulseClient:
             Created ticket details
         """
         category_name = await self._resolve_ticket_category_name(category_id)
+        effective_unit_id = unit_id or await self._get_current_active_unit_id()
 
         payload = {
             "description": description,
             "imageUrls": images or [],
-            "unitId": unit_id,
+            "unitId": effective_unit_id,
             "categoryName": category_name,
             "severity": severity,
         }
