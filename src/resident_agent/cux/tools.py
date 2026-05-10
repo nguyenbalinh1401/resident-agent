@@ -567,7 +567,7 @@ TOOLS = [
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["Pending", "Confirmed", "Cancelled", "Completed"],
+                        "enum": ["Pending", "Approved", "Cancelled", "Completed"],
                         "description": "Lọc theo trạng thái",
                     },
                 },

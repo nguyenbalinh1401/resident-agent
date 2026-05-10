@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, Header
 import structlog
 from openai import BadRequestError
 
-from resident_agent.schemas.chat_schemas import ChatRequest, ChatResponse
+from resident_agent.schemas.chat_schemas import ChatRequest, ChatResponse, ToolCall
 from resident_agent.auth.dependencies import get_current_user, get_pulse_client
 from resident_agent.cux.orchestrator import CuxOrchestrator
+from resident_agent.cux.tools import TOOLS, execute_tool
 from resident_agent.core.config import Settings
 from resident_agent.core.ops_store import OpsStore
 from resident_agent.clients.pulse_client import PulseClient
@@ -16,6 +17,11 @@ from resident_agent.clients.pulse_client import PulseClient
 logger = structlog.get_logger()
 
 router = APIRouter()
+_DIRECT_TOOL_NAMES = {
+    tool["function"]["name"]
+    for tool in TOOLS
+    if tool.get("type") == "function" and tool.get("function", {}).get("name")
+}
 
 
 def _normalize_locale(locale: Optional[str]) -> str:
@@ -235,16 +241,47 @@ async def execute_action(
     orchestrator = CuxOrchestrator(settings)
 
     try:
-        # Process as tool_call intent with injected PulseClient
-        response = await orchestrator.process(
-            message=request.message or f"Execute action: {action}",
-            session_id=session_id,
-            user=user,
-            pulse_client=pulse_client,
-            intent_type="tool_call",
-            attachments=request.attachments,
-            locale=locale,
-        )
+        if action in _DIRECT_TOOL_NAMES:
+            permissions = orchestrator.permission_mapper.normalize_permissions(
+                user.get("permissions", [])
+            )
+            params = request.context or {}
+            result = await execute_tool(
+                action,
+                params,
+                pulse_client,
+                user_permissions=permissions,
+                attachments=request.attachments,
+            )
+            message = await orchestrator.action_generator.format_tool_result(
+                action,
+                action,
+                result,
+                locale,
+            )
+            response = ChatResponse(
+                message=message,
+                actions=[],
+                session_id=session_id,
+                tool_calls=[
+                    ToolCall(
+                        tool=action,
+                        params=params,
+                        result=result,
+                    )
+                ],
+                intent="tool_call",
+            )
+        else:
+            response = await orchestrator.process(
+                message=action or request.message or "",
+                session_id=session_id,
+                user=user,
+                pulse_client=pulse_client,
+                intent_type="tool_call",
+                attachments=request.attachments,
+                locale=locale,
+            )
     except BadRequestError as e:
         friendly = _provider_error_message(e, locale) or _localized_text(
             locale,

@@ -171,6 +171,20 @@ class PulseClient:
 
         return None
 
+    async def _get_current_user_id(self) -> Optional[str]:
+        """Resolve the current authenticated Pulse user id."""
+        try:
+            current_user = await self.get_current_user()
+        except PulseAPIError:
+            return None
+
+        user_id = current_user.get("id") or current_user.get("userId")
+        if user_id is None:
+            return None
+
+        normalized = str(user_id).strip()
+        return normalized or None
+
     async def _is_privileged_user(self) -> bool:
         """Best-effort check for admin/staff/manager scopes."""
         try:
@@ -220,8 +234,29 @@ class PulseClient:
                 except Exception:
                     error_detail = {"raw": response.text}
 
+                message = None
+                if isinstance(error_detail, dict):
+                    nested_error = error_detail.get("error")
+                    if isinstance(nested_error, dict):
+                        message = (
+                            nested_error.get("detail")
+                            or nested_error.get("message")
+                            or nested_error.get("title")
+                            or nested_error.get("errorCode")
+                        )
+                    if not message:
+                        message = (
+                            error_detail.get("detail")
+                            or error_detail.get("message")
+                            or error_detail.get("title")
+                            or error_detail.get("errorCode")
+                            or error_detail.get("error")
+                        )
+                elif isinstance(error_detail, str):
+                    message = error_detail
+
                 raise PulseAPIError(
-                    message=f"API request failed: {response.status_code}",
+                    message=str(message or f"API request failed: {response.status_code}"),
                     status_code=response.status_code,
                     details=error_detail
                 )
@@ -950,31 +985,61 @@ class PulseClient:
                 details={"amenityId": amenity_id},
             )
 
-        return await self._request(
+        user_id = await self._get_current_user_id()
+        if not self._is_guid(user_id):
+            raise PulseAPIError(
+                "Could not resolve the current user for booking.",
+                status_code=401,
+                details={"userId": user_id},
+            )
+
+        result = await self._request(
             "POST",
-            "/api/v1/resident/bookings",
+            "/api/Bookings",
             json_data={
                 "amenityId": amenity_id,
+                "userId": user_id,
                 "bookingDate": booking_date,
                 "startTime": start_time,
-                "endTime": end_time
+                "endTime": end_time,
+                "numPeople": 1,
             }
         )
+
+        booking_id = None
+        if isinstance(result, dict):
+            booking_id = result.get("id") or result.get("bookingId")
+        if not booking_id:
+            raise PulseAPIError(
+                "Booking was submitted but the server did not return a booking record.",
+                status_code=502,
+                details={"response": result},
+            )
+
+        return result
 
     async def get_bookings(self, status: Optional[str] = None) -> List[Dict]:
         """Get user's bookings.
 
         Args:
-            status: Filter by status (Pending, Confirmed, Cancelled, Completed)
+            status: Filter by status (Pending, Approved, Cancelled, Completed)
 
         Returns:
             List of bookings
         """
-        params = {}
-        if status:
-            params["status"] = status
+        user_id = await self._get_current_user_id()
+        if not self._is_guid(user_id):
+            raise PulseAPIError(
+                "Could not resolve the current user for loading bookings.",
+                status_code=401,
+                details={"userId": user_id},
+            )
 
-        return await self._request("GET", "/api/v1/resident/bookings", params=params)
+        params = {"userId": user_id}
+        if status:
+            params["status"] = "Approved" if status == "Confirmed" else status
+
+        return await self._request("GET", "/api/Bookings/my-bookings", params=params)
 
     async def get_bookings_queue(
         self,
@@ -1019,10 +1084,21 @@ class PulseClient:
         Returns:
             Cancellation result
         """
+        user_id = await self._get_current_user_id()
+        if not self._is_guid(user_id):
+            raise PulseAPIError(
+                "Could not resolve the current user for cancelling the booking.",
+                status_code=401,
+                details={"userId": user_id},
+            )
+
         return await self._request(
-            "PUT",
-            f"/api/v1/resident/bookings/{booking_id}/cancel",
-            json_data={"reason": "Cancelled by Pulse AI assistant"},
+            "POST",
+            f"/api/Bookings/{booking_id}/cancel",
+            json_data={
+                "userId": user_id,
+                "reason": "Cancelled by Pulse AI assistant",
+            },
         )
 
     # ==================== Reference Data ====================

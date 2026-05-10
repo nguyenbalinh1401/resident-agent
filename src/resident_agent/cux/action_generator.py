@@ -210,7 +210,7 @@ class ActionGenerator:
             "approve_ticket": "approve_ticket",
             "reject_ticket": "reject_ticket",
             "complete_ticket": "complete_ticket",
-            "book_amenity": "get_amenities",
+            "book_amenity": "book_amenity",
             "view_amenities": "get_amenities",
             "view_notifications": "get_notifications",
             "view_payment_history": "get_payment_history",
